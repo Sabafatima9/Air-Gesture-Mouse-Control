@@ -71,7 +71,11 @@ class GestureFrame:
     fingers: FingerState = field(default_factory=FingerState)
     pinches: PinchRatios = field(default_factory=PinchRatios)
     hand_size: float = 1.0
+    # Depth scale vs REFERENCE_HAND_SIZE (>1 when farther / smaller silhouette).
+    depth_scale: float = 1.0
     index_tip_norm: Tuple[float, float] = (0.5, 0.5)
+    # Depth-compensated tip used for cursor mapping (still 0..1 frame space).
+    cursor_norm: Tuple[float, float] = (0.5, 0.5)
     scroll_anchor_norm: Tuple[float, float] = (0.5, 0.5)
     # True when index+middle extended and ring+pinky curled (scroll pose).
     scroll_pose: bool = False
@@ -84,15 +88,46 @@ def _lm_xy(landmarks: Sequence, idx: int) -> np.ndarray:
     return np.array([lm.x, lm.y], dtype=np.float64)
 
 
+def _lm_xyz(landmarks: Sequence, idx: int) -> np.ndarray:
+    lm = landmarks[idx]
+    z = getattr(lm, "z", 0.0)
+    return np.array([lm.x, lm.y, float(z)], dtype=np.float64)
+
+
 def hand_size(landmarks: Sequence) -> float:
+    """Wrist → middle MCP distance in normalized image coords (depth proxy)."""
     a = _lm_xy(landmarks, cfg.HAND_SIZE_A)
     b = _lm_xy(landmarks, cfg.HAND_SIZE_B)
     size = float(np.linalg.norm(a - b))
     return max(size, 1e-6)
 
 
+def depth_scale_from_hand_size(size: float) -> float:
+    """Amplify tip deviation from frame center when the hand is farther (smaller)."""
+    raw = cfg.REFERENCE_HAND_SIZE / max(size, 1e-6)
+    return float(np.clip(raw, cfg.DEPTH_SCALE_MIN, cfg.DEPTH_SCALE_MAX))
+
+
+def depth_compensate_norm(
+    norm_x: float,
+    norm_y: float,
+    scale: float,
+) -> Tuple[float, float]:
+    """
+    Expand/contract tip position around frame center by depth scale so near/far
+    hand motion maps to a similar usable screen region.
+    """
+    cx, cy = 0.5, 0.5
+    x = cx + (norm_x - cx) * scale
+    y = cy + (norm_y - cy) * scale
+    return float(x), float(y)
+
+
 def fingers_up(landmarks: Sequence, size: float) -> FingerState:
-    """Heuristic finger-up detection using landmark ratios (distance-invariant)."""
+    """Heuristic finger-up detection using landmark ratios (distance-invariant).
+
+    Soft image-space checks only — no hard palm-facing / yaw / pitch gate.
+    """
     margin = cfg.FINGER_UP_MARGIN * size
 
     def tip_above_pip(tip_i: int, pip_i: int) -> bool:
@@ -102,7 +137,7 @@ def fingers_up(landmarks: Sequence, size: float) -> FingerState:
         return tip[1] < pip[1] - margin
 
     # Thumb: extended if tip is farther from palm center (wrist→middle MCP mid)
-    # than IP joint, along the thumb axis (works for mirrored selfie view).
+    # than IP joint (works for mirrored selfie view and mild angle changes).
     wrist = _lm_xy(landmarks, cfg.WRIST)
     mid_mcp = _lm_xy(landmarks, cfg.MIDDLE_MCP)
     palm = (wrist + mid_mcp) / 2.0
@@ -155,6 +190,7 @@ class GestureDetector:
 
     def update(self, landmarks: Sequence) -> GestureFrame:
         size = hand_size(landmarks)
+        dscale = depth_scale_from_hand_size(size)
         fingers = fingers_up(landmarks, size)
         pinches = pinch_ratios(landmarks, size)
         scroll_pose = is_scroll_pose(fingers)
@@ -169,12 +205,16 @@ class GestureDetector:
         index_tip = _lm_xy(landmarks, cfg.INDEX_TIP)
         mid_tip = _lm_xy(landmarks, cfg.MIDDLE_TIP)
         scroll_anchor = (index_tip + mid_tip) / 2.0
+        tip_x, tip_y = float(index_tip[0]), float(index_tip[1])
+        cursor = depth_compensate_norm(tip_x, tip_y, dscale)
 
         return GestureFrame(
             fingers=fingers,
             pinches=pinches,
             hand_size=size,
-            index_tip_norm=(float(index_tip[0]), float(index_tip[1])),
+            depth_scale=dscale,
+            index_tip_norm=(tip_x, tip_y),
+            cursor_norm=cursor,
             scroll_anchor_norm=(float(scroll_anchor[0]), float(scroll_anchor[1])),
             scroll_pose=scroll_pose,
             active_pinch=active,

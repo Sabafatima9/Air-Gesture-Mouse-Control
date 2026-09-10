@@ -18,6 +18,7 @@ FailSafeException and stops the script — intentional emergency stop.
 
 from __future__ import annotations
 
+import math
 import sys
 from typing import Optional, Tuple
 
@@ -27,7 +28,7 @@ import config as cfg
 
 
 class MouseController:
-    """Thin wrapper around pyautogui with smoothing helpers."""
+    """Thin wrapper around pyautogui with adaptive smoothing helpers."""
 
     def __init__(self) -> None:
         pyautogui.FAILSAFE = cfg.FAILSAFE
@@ -43,13 +44,34 @@ class MouseController:
     def reset_smoothing(self) -> None:
         self._smoothed = None
 
+    def hold_smoothed_position(self) -> Optional[Tuple[float, float]]:
+        """Re-apply last smoothed cursor without advancing (tracking-hold grace)."""
+        if self._smoothed is None:
+            return None
+        x, y = self._smoothed
+        x = max(1.0, min(float(self.screen_w - 2), x))
+        y = max(1.0, min(float(self.screen_h - 2), y))
+        try:
+            pyautogui.moveTo(x, y, _pause=False)
+        except pyautogui.FailSafeException:
+            raise
+        return x, y
+
     def move_to_smoothed(self, target_x: float, target_y: float) -> Tuple[float, float]:
-        """Move cursor toward (target_x, target_y) with exponential smoothing."""
+        """Move cursor toward target with velocity-adaptive exponential smoothing.
+
+        Fast hand motion → less smoothing (responsive); slow motion → more
+        smoothing (stable). Avoids the laggy feel of a high fixed SMOOTHING.
+        """
         if self._smoothed is None:
             self._smoothed = (target_x, target_y)
         else:
             sx, sy = self._smoothed
-            alpha = 1.0 - cfg.SMOOTHING  # higher SMOOTHING → smaller alpha
+            dist = math.hypot(target_x - sx, target_y - sy)
+            # Blend base ↔ fast smoothing by how far the target jumped this frame.
+            t = min(1.0, dist / max(cfg.SMOOTHING_VELOCITY_REF, 1e-6))
+            smooth = cfg.SMOOTHING + (cfg.SMOOTHING_FAST - cfg.SMOOTHING) * t
+            alpha = 1.0 - smooth  # higher smooth → smaller alpha
             sx += (target_x - sx) * alpha
             sy += (target_y - sy) * alpha
             self._smoothed = (sx, sy)
@@ -87,7 +109,7 @@ class MouseController:
             self._dragging = False
 
     def ensure_released(self) -> None:
-        """Release any held drag (e.g. hand lost)."""
+        """Release any held drag (e.g. hand lost past hold grace)."""
         self.mouse_up()
 
     def scroll(self, ticks: int) -> None:
