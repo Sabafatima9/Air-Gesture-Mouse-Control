@@ -60,12 +60,11 @@ class ActionState:
         self.scroll_prev_y: Optional[float] = None
         self.last_status = ""
         self.last_status_t = 0.0
-        # Frames remaining in tracking-hold grace after hand briefly lost.
         self.hold_frames_left = 0
         self.last_hand_size = 0.0
         self.last_depth_scale = 1.0
         self.last_fingers_label = "-----"
-        self.last_pinch_dict = {"idx": 1.0, "mid": 1.0, "rng": 1.0}
+        self.last_pinch_dict = {"idx": 1.0, "mid": 1.0}
 
     def reset_pinch(self) -> None:
         self.left_pinch_start = None
@@ -75,16 +74,34 @@ class ActionState:
         self.scroll_prev_y = None
 
 
-# Short on-screen legend (gesture → mouse action).
+# Short on-screen legend (simplified gesture → mouse action).
 _LEGEND_LINES = [
     "Move: index tip",
-    "L-click: thumb+index (quick)",
-    "Dbl: 2x thumb+index",
-    "Drag: thumb+index hold",
+    "L-click: thumb+index",
+    "Dbl: 2x quick pinch",
+    "Drag: pinch + hold",
+    "Safe: closed fist",
+    "Scroll: index+middle",
     "R-click: thumb+middle",
-    "M-click: thumb+ring",
-    "Scroll: index+middle up",
 ]
+
+
+def _mode_label(mode: Mode, hand_found: bool, holding: bool) -> str:
+    """Human-friendly HUD status (matches prompt feedback list)."""
+    if holding:
+        return "HOLD (tracking grace)"
+    if not hand_found:
+        return "No Hand Detected"
+    return {
+        Mode.IDLE: "Hand Detected",
+        Mode.MOVE: "Cursor Active",
+        Mode.LEFT_CLICK: "LEFT CLICK",
+        Mode.RIGHT_CLICK: "RIGHT CLICK",
+        Mode.DOUBLE_CLICK: "DOUBLE CLICK",
+        Mode.DRAG: "DRAGGING",
+        Mode.SCROLL: "SCROLL",
+        Mode.SAFE: "SAFE / NO ACTION",
+    }.get(mode, mode.name.replace("_", " "))
 
 
 def _draw_hud(
@@ -98,7 +115,7 @@ def _draw_hud(
     holding: bool = False,
 ) -> None:
     h, w = frame.shape[:2]
-    top_h = 130
+    top_h = 110 if cfg.SHOW_DEBUG_HUD else 56
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (w, top_h), (20, 20, 20), -1)
     cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
@@ -108,47 +125,47 @@ def _draw_hud(
         Mode.MOVE: (80, 220, 80),
         Mode.LEFT_CLICK: (80, 180, 255),
         Mode.RIGHT_CLICK: (80, 80, 255),
-        Mode.MIDDLE_CLICK: (255, 180, 80),
         Mode.DOUBLE_CLICK: (255, 255, 80),
         Mode.DRAG: (255, 80, 200),
         Mode.SCROLL: (200, 255, 80),
+        Mode.SAFE: (160, 160, 255),
     }.get(mode, (200, 200, 200))
-
     if holding:
-        status = "HOLD (tracking grace)"
-    elif not hand_found:
-        status = "No hand"
-    else:
-        status = mode.name.replace("_", " ")
+        mode_color = (180, 180, 100)
+    if not hand_found and not holding:
+        mode_color = (120, 120, 120)
+
+    status = _mode_label(mode, hand_found, holding)
     cv2.putText(
-        frame, f"Mode: {status}", (12, 26),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2, cv2.LINE_AA,
-    )
-    cv2.putText(
-        frame, f"Fingers TIMRP: {fingers_label}", (12, 52),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1, cv2.LINE_AA,
-    )
-    pinch_txt = (
-        f"Pinch  idx={pinches.get('idx', 1):.2f}  "
-        f"mid={pinches.get('mid', 1):.2f}  "
-        f"rng={pinches.get('rng', 1):.2f}"
-    )
-    cv2.putText(
-        frame, pinch_txt, (12, 78),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 255, 180), 1, cv2.LINE_AA,
-    )
-    depth_txt = f"HandSize={hand_size:.3f}  DepthScale={depth_scale:.2f}"
-    cv2.putText(
-        frame, depth_txt, (12, 104),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 200, 255), 1, cv2.LINE_AA,
+        frame, status, (12, 28),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.72, mode_color, 2, cv2.LINE_AA,
     )
     cv2.putText(
         frame, "Q/Esc quit", (w - 130, 26),
         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (160, 160, 160), 1, cv2.LINE_AA,
     )
 
+    if cfg.SHOW_DEBUG_HUD:
+        cv2.putText(
+            frame, f"Fingers TIMRP: {fingers_label}", (12, 54),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA,
+        )
+        pinch_txt = (
+            f"Pinch  idx={pinches.get('idx', 1):.2f}  "
+            f"mid={pinches.get('mid', 1):.2f}"
+        )
+        cv2.putText(
+            frame, pinch_txt, (12, 76),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 255, 180), 1, cv2.LINE_AA,
+        )
+        depth_txt = f"HandSize={hand_size:.3f}  DepthScale={depth_scale:.2f}"
+        cv2.putText(
+            frame, depth_txt, (12, 98),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 200, 255), 1, cv2.LINE_AA,
+        )
+
     if cfg.SHOW_GESTURE_LEGEND:
-        legend_x = w - 250
+        legend_x = w - 230
         legend_y0 = top_h + 16
         box_h = 18 * len(_LEGEND_LINES) + 12
         overlay2 = frame.copy()
@@ -195,7 +212,6 @@ def _draw_landmarks(frame, landmarks, active_pinch: Optional[str]) -> None:
     for idx, color in tip_colors.items():
         cv2.circle(frame, px(idx), 7, color, -1, cv2.LINE_AA)
 
-    # Wrist → middle MCP = hand-size / depth reference.
     cv2.line(frame, px(cfg.WRIST), px(cfg.MIDDLE_MCP), (100, 180, 255), 2, cv2.LINE_AA)
     cv2.circle(frame, px(cfg.WRIST), 5, (100, 180, 255), -1, cv2.LINE_AA)
 
@@ -203,10 +219,7 @@ def _draw_landmarks(frame, landmarks, active_pinch: Optional[str]) -> None:
         cv2.line(frame, px(cfg.THUMB_TIP), px(cfg.INDEX_TIP), (0, 255, 0), 2)
     elif active_pinch == "middle":
         cv2.line(frame, px(cfg.THUMB_TIP), px(cfg.MIDDLE_TIP), (0, 80, 255), 2)
-    elif active_pinch == "ring":
-        cv2.line(frame, px(cfg.THUMB_TIP), px(cfg.RING_TIP), (255, 160, 0), 2)
 
-    # Usable mapping region (margin box).
     m = cfg.FRAME_MARGIN
     x0, y0 = int(m * w), int(m * h)
     x1, y1 = int((1.0 - m) * w), int((1.0 - m) * h)
@@ -217,15 +230,28 @@ def process_actions(
     gframe,
     state: ActionState,
     mouse: MouseController,
+    detector: GestureDetector,
     now: float,
 ) -> Mode:
     """Apply mouse actions from gesture frame. Returns display mode."""
+    # --- Closed fist: SAFE / NO ACTION (highest comfort priority) -----------
+    if gframe.closed_fist:
+        mouse.ensure_released()
+        detector.set_dragging(False)
+        state.reset_pinch()
+        state.reset_scroll()
+        state.pending_single_click = False
+        state.prev_pinch = None
+        state.mode = Mode.SAFE
+        return Mode.SAFE
+
     pinch = gframe.active_pinch
     pinch_engaged = pinch is not None and pinch != state.prev_pinch
 
-    # --- Scroll pose (priority over pinches) --------------------------------
+    # --- Scroll pose (confirmed) --------------------------------------------
     if gframe.scroll_pose:
         mouse.ensure_released()
+        detector.set_dragging(False)
         state.reset_pinch()
         state.pending_single_click = False
         state.prev_pinch = None
@@ -242,7 +268,6 @@ def process_actions(
                     state.scroll_prev_y = ay
                     state.last_action_time = now
             else:
-                # Soft follow so small jitter does not accumulate.
                 state.scroll_prev_y = 0.85 * state.scroll_prev_y + 0.15 * ay
         state.mode = Mode.SCROLL
         return Mode.SCROLL
@@ -258,9 +283,10 @@ def process_actions(
     )
     mouse.move_to_smoothed(sx, sy)
 
-    # --- Right click: thumb–middle pinch (rising edge) ----------------------
+    # --- Right click: thumb–middle pinch (optional, rising edge) ------------
     if pinch == "middle":
         mouse.ensure_released()
+        detector.set_dragging(False)
         state.reset_pinch()
         state.pending_single_click = False
         if pinch_engaged and (now - state.last_action_time >= cfg.CLICK_COOLDOWN):
@@ -270,21 +296,14 @@ def process_actions(
         state.mode = Mode.RIGHT_CLICK
         return Mode.RIGHT_CLICK
 
-    # --- Middle click: thumb–ring pinch (rising edge) -----------------------
-    if pinch == "ring":
-        mouse.ensure_released()
-        state.reset_pinch()
-        state.pending_single_click = False
-        if pinch_engaged and (now - state.last_action_time >= cfg.CLICK_COOLDOWN):
-            mouse.middle_click()
-            state.last_action_time = now
-        state.prev_pinch = pinch
-        state.mode = Mode.MIDDLE_CLICK
-        return Mode.MIDDLE_CLICK
-
     # --- Left pinch: click / double / drag ----------------------------------
     if pinch == "index":
         if state.left_pinch_start is None:
+            # Ignore a re-pinch that is too soon after the previous release.
+            if now - state.last_action_time < cfg.PINCH_MIN_RELEASE_GAP:
+                state.prev_pinch = pinch
+                state.mode = Mode.MOVE
+                return Mode.MOVE
             state.left_pinch_start = now
             state.left_held_for_drag = False
 
@@ -294,6 +313,7 @@ def process_actions(
                 state.pending_single_click = False
                 mouse.mouse_down()
                 state.left_held_for_drag = True
+                detector.set_dragging(True)
                 state.last_action_time = now
             state.prev_pinch = pinch
             state.mode = Mode.DRAG
@@ -307,6 +327,7 @@ def process_actions(
     if state.left_pinch_start is not None:
         was_drag = state.left_held_for_drag
         state.reset_pinch()
+        detector.set_dragging(False)
         state.prev_pinch = None
 
         if was_drag:
@@ -314,7 +335,6 @@ def process_actions(
             state.mode = Mode.MOVE
             return Mode.MOVE
 
-        # Short pinch → schedule single click, or promote to double-click.
         if (
             state.pending_single_click
             and (now - state.pending_click_time) <= cfg.DOUBLE_CLICK_WINDOW
@@ -362,7 +382,7 @@ def main() -> None:
     print("FAILSAFE: fling cursor to top-left corner to emergency-stop.")
     print(
         "Gestures: Move=index | L/Dbl/Drag=thumb+index | "
-        "R=thumb+middle | M=thumb+ring | Scroll=index+middle up"
+        "Safe=fist | Scroll=index+middle | R=thumb+middle (optional)"
     )
 
     landmarker = create_landmarker()
@@ -372,6 +392,12 @@ def main() -> None:
     camera = cv2.VideoCapture(cfg.CAMERA_INDEX)
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.FRAME_WIDTH)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.FRAME_HEIGHT)
+    # Prefer MJPEG when available — often higher effective FPS on USB cams.
+    try:
+        camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
 
     if not camera.isOpened():
         print(
@@ -384,7 +410,7 @@ def main() -> None:
     cv2.namedWindow(cfg.WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(cfg.WINDOW_NAME, cfg.FRAME_WIDTH, cfg.FRAME_HEIGHT)
 
-    frame_timestamp_ms = 0
+    t0 = time.time()
 
     try:
         while True:
@@ -393,17 +419,17 @@ def main() -> None:
                 print("ERROR: Failed to read a frame from the camera.")
                 break
 
-            # Mirror for natural selfie mapping (user's left ↔ screen left).
             frame = cv2.flip(frame, 1)
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame_timestamp_ms += int(1000 / 30)
+            # Real elapsed ms keeps MediaPipe VIDEO timestamps monotonic & accurate.
+            frame_timestamp_ms = max(1, int((time.time() - t0) * 1000))
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             result = landmarker.detect_for_video(mp_image, frame_timestamp_ms)
 
             hand_found = bool(result and result.hand_landmarks)
             fingers_label = "-----"
-            pinch_dict = {"idx": 1.0, "mid": 1.0, "rng": 1.0}
+            pinch_dict = {"idx": 1.0, "mid": 1.0}
             hand_size_v = 0.0
             depth_scale_v = 1.0
             mode = Mode.IDLE
@@ -422,18 +448,22 @@ def main() -> None:
                 state.last_fingers_label = fingers_label
                 state.last_pinch_dict = pinch_dict
                 state.hold_frames_left = cfg.TRACKING_HOLD_FRAMES
-                mode = process_actions(gframe, state, mouse, now)
+                mode = process_actions(gframe, state, mouse, detector, now)
                 _draw_landmarks(frame, landmarks, gframe.active_pinch)
             elif state.hold_frames_left > 0:
-                # Brief loss: hold last smoothed cursor; do not reset yet.
                 state.hold_frames_left -= 1
                 holding = True
                 fingers_label = state.last_fingers_label
                 pinch_dict = state.last_pinch_dict
                 hand_size_v = state.last_hand_size
                 depth_scale_v = state.last_depth_scale
-                mode = state.mode if state.mode != Mode.IDLE else Mode.MOVE
-                mouse.hold_smoothed_position()
+                # Do not advance clicks/drags during grace — only hold cursor.
+                if state.mode == Mode.SAFE:
+                    mode = Mode.SAFE
+                else:
+                    mode = state.mode if state.mode != Mode.IDLE else Mode.MOVE
+                if mode != Mode.SAFE:
+                    mouse.hold_smoothed_position()
             else:
                 detector.reset()
                 mouse.ensure_released()
@@ -455,11 +485,7 @@ def main() -> None:
                 holding=holding,
             )
 
-            status = (
-                "HOLD"
-                if holding
-                else (mode.name if hand_found else "NO_HAND")
-            )
+            status = _mode_label(mode, hand_found, holding)
             if (
                 status != state.last_status
                 or now - state.last_status_t > cfg.STATUS_PRINT_INTERVAL

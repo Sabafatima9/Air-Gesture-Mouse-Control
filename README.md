@@ -15,42 +15,41 @@ Press **Q** or **Esc** in the camera window to quit.
 
 ---
 
-## How clicks work (finger → mouse map)
+## How gestures work (simplified)
 
 Preview is **mirrored** so moving your hand left moves the cursor left.  
 Fingers on the HUD are labeled **TIMRP** = Thumb · Index · Middle · Ring · Pinky (`-` = curled).
 
 | Gesture | Fingers / how | Mouse action |
 |--------|----------------|--------------|
-| **Move** | Point with **index** tip (other fingers can be down) | Cursor follows (depth-compensated) |
+| **Move** | **Index** tip | Cursor follows (depth-compensated, smoothed) |
 | **Left click** | Pinch **thumb + index**, release quickly | Left click |
 | **Double click** | Two quick **thumb + index** pinches | Double-click |
-| **Drag** | Pinch **thumb + index** and **hold** (~0.45s), then move; release to drop | Click-and-drag |
-| **Right click** | Pinch **thumb + middle** | Right click |
-| **Middle click** | Pinch **thumb + ring** | Middle click |
-| **Scroll** | Hold **index + middle** up, **ring + pinky** curled (“peace” / two-finger). Move hand **up/down** | Vertical scroll |
+| **Drag** | Pinch **thumb + index** and **hold** (~0.45–0.5s), then move; release to drop | Click-and-drag |
+| **Safe / rest** | **Closed fist** (index–pinky curled) | **No mouse action** — rest without accidents |
+| **Scroll** | **Index + middle** up, **ring + pinky** curled. Move hand **up/down** | Vertical scroll |
+| **Right click** *(optional)* | Pinch **thumb + middle** | Right click |
 
-### Priority rules (no ambiguous overlap)
+### Priority (reliability first)
 
-1. **Scroll pose** wins over pinches while index+middle are up and ring+pinky are down.
-2. Among pinches, only one is active at a time. Priority if several are close: **ring → middle → index** (strongest/closest pinch among candidates).
-3. Left pinch timing: **short release** → click (or double if a second short pinch follows); **hold** past the drag threshold → drag.
+1. **Closed fist** → SAFE / NO ACTION (no move, click, drag, or scroll).
+2. **Scroll pose** (confirmed over a few frames) → scroll; suppresses pinches.
+3. **Thumb + index** → left click / double / drag (by timing).
+4. **Thumb + middle** → optional right click (index pinch preferred if both close).
 
-Pinch distances are **normalized by hand size** (wrist → middle-finger base). Cursor mapping is **depth-compensated** using that same hand-size metric so moving nearer/farther does not collapse the usable range or drop tracking as easily.
+Pinch distances are **normalized by hand size**. Cursor mapping is **depth-compensated**. Drag uses a **wider pinch-off tolerance** so small finger wobble does not drop the drag.
 
 ---
 
-## Tracking improvements (real-world use)
+## Comfort & smoothness
 
-- **Lower MediaPipe thresholds** (detection ~0.5, presence/tracking ~0.4) so hands farther from the camera still track.
-- **Wider usable frame** (`FRAME_MARGIN` ~0.06) — cursor is not stuck in a tiny central band.
-- **Depth-aware tip→screen mapping** — hand size (wrist→MCP) scales motion around frame center.
-- **Velocity-adaptive smoothing** — responsive when you move fast, steadier when slow.
-- **Tracking hold / grace** (~10 frames) — brief loss (angle/depth blip) keeps the last cursor instead of resetting.
-- **No hard palm-facing gate** — soft finger heuristics only; mild angles are OK.
-- **HUD debug**: skeleton + fingertips, hand-size / depth-scale, TIMRP flags, pinch ratios, and an on-screen gesture legend.
+- **Forgiving pinches** — no exaggerated pinch needed.
+- **Velocity-adaptive smoothing** + small deadzone — stable when slow, responsive when fast.
+- **Tracking hold / grace** — brief hand loss keeps the last cursor instead of jumping.
+- **Scroll / fist confirm frames** — avoid single-frame false triggers.
+- **HUD status**: `Cursor Active`, `LEFT CLICK`, `DOUBLE CLICK`, `DRAGGING`, `SCROLL`, `SAFE / NO ACTION`, `No Hand Detected`.
 
-Tune in `config.py`: `MIN_HAND_*_CONFIDENCE`, `FRAME_MARGIN`, `SMOOTHING`, `REFERENCE_HAND_SIZE`, `TRACKING_HOLD_FRAMES`, pinch/scroll timings.
+Tune in `config.py`: pinch ratios, `DRAG_HOLD_TIME`, `SMOOTHING`, `SCROLL_CONFIRM_FRAMES`, `FIST_CONFIRM_FRAMES`, etc.
 
 ---
 
@@ -120,12 +119,11 @@ python hand.py
 
 ### On-screen HUD
 
-- **Mode**: MOVE / LEFT CLICK / RIGHT CLICK / MIDDLE CLICK / DOUBLE CLICK / DRAG / SCROLL / HOLD
-- **Fingers TIMRP**: `T`=thumb … `P`=pinky; `-` = curled
-- **Pinch ratios**: thumb–index / thumb–middle / thumb–ring (lower = closer; click when below ON threshold)
-- **HandSize / DepthScale**: depth proxy used for stable cursor mapping
+- **Status**: Cursor Active / LEFT CLICK / DOUBLE CLICK / DRAGGING / SCROLL / SAFE / NO ACTION / No Hand Detected
+- **Fingers TIMRP** (debug): `T`=thumb … `P`=pinky; `-` = curled
+- **Pinch ratios** (debug): thumb–index / thumb–middle
+- **HandSize / DepthScale**: depth proxy for stable cursor mapping
 - **Legend** (right side): short gesture → action cheat-sheet
-- **Cyan line** wrist→middle MCP: hand-size reference; colored tips = fingertips
 
 ---
 
@@ -134,7 +132,7 @@ python hand.py
 | File | Role |
 |------|------|
 | `main.py` | Camera loop, HUD, action state machine, tracking hold |
-| `gestures.py` | Finger-up / pinch / scroll-pose / depth-compensated map |
+| `gestures.py` | Finger-up / pinch / fist / scroll-pose / depth map |
 | `mouse_controller.py` | Cross-platform mouse + adaptive smoothing |
 | `config.py` | Tunable constants |
 | `hand.py` | Thin wrapper → `main.main()` |
@@ -151,11 +149,12 @@ python hand.py
 | Camera won’t open | Change `CAMERA_INDEX` in `config.py` (try `1`). Close other apps using the webcam. |
 | Cursor doesn’t move (macOS) | Grant **Accessibility** + Camera; restart the terminal. |
 | Cursor doesn’t move (Linux Wayland) | Use X11/XWayland; install `python3-xlib`. |
-| Loses hand when slightly far / angled | Thresholds are already lowered; improve lighting; raise hand into frame; tweak `MIN_HAND_*` in `config.py`. |
-| Cursor jumps when moving nearer/farther | Adjust `REFERENCE_HAND_SIZE` / `DEPTH_SCALE_*` in `config.py`. |
+| Fist not recognized as safe | Curl index–pinky clearly; tweak `FINGER_UP_MARGIN` / `FIST_CONFIRM_FRAMES`. |
+| Scroll triggers while moving | Raise `SCROLL_CONFIRM_FRAMES` or keep ring/pinky more curled. |
 | Clicks too sensitive / not enough | Adjust `PINCH_ON_RATIO` / `PINCH_OFF_RATIO` in `config.py`. |
+| Drag drops too easily | Raise `DRAG_PINCH_OFF_RATIO`. |
 | Cursor laggy | Lower `SMOOTHING` or raise `SMOOTHING_VELOCITY_REF`. |
-| Cursor jittery | Increase `SMOOTHING` (e.g. `0.5`). |
+| Cursor jittery | Increase `SMOOTHING` or `CURSOR_DEADZONE_PX`. |
 | Can’t reach screen edges | Decrease `FRAME_MARGIN` (e.g. `0.04`). |
 | Scroll inverted / too fast | Flip sign via negative `SCROLL_AMOUNT`, or change `SCROLL_SENSITIVITY`. |
 | Brief flicker loses cursor | Increase `TRACKING_HOLD_FRAMES` (e.g. `15`). |
@@ -170,3 +169,4 @@ python hand.py
 - Lighting and busy backgrounds can reduce tracking quality.
 - Very fast gestures may be missed; pinches need a clear open→close→open.
 - Headless / CI environments usually have **no webcam** — run on a desktop with a camera.
+- A small set of **reliable** gestures is intentional — middle-click (thumb+ring) was removed for simplicity.

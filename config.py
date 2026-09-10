@@ -36,65 +36,61 @@ MIN_TRACKING_CONFIDENCE = 0.4
 # Cursor mapping & smoothing
 # ---------------------------------------------------------------------------
 # Fraction of frame edges ignored so the fingertip can reach screen edges.
-# Smaller = wider usable band (easier to hit corners); keep a little margin.
 FRAME_MARGIN = 0.06
 # Base exponential smoothing: 0 = instant (jittery), closer to 1 = smoother/laggier.
-# Adaptive smoothing in MouseController reduces this when the hand moves fast.
-SMOOTHING = 0.35
+SMOOTHING = 0.38
 # Velocity (screen px/frame) above which smoothing eases toward SMOOTHING_FAST.
-SMOOTHING_VELOCITY_REF = 40.0
-SMOOTHING_FAST = 0.12
+SMOOTHING_VELOCITY_REF = 45.0
+SMOOTHING_FAST = 0.10
+# Ignore sub-pixel jitter below this screen-pixel distance (comfort).
+CURSOR_DEADZONE_PX = 1.5
 # Reference hand size (wrist→middle MCP, normalized 0..1) at a comfortable
-# working distance. Used to depth-compensate absolute tip→screen mapping so
-# moving nearer/farther does not collapse or explode the cursor range.
+# working distance. Used to depth-compensate absolute tip→screen mapping.
 REFERENCE_HAND_SIZE = 0.18
-# Clamp on depth scale = REFERENCE_HAND_SIZE / hand_size.
 DEPTH_SCALE_MIN = 0.55
 DEPTH_SCALE_MAX = 2.4
 
 # ---------------------------------------------------------------------------
 # Tracking hold / grace
-# If the hand is briefly lost, keep the last smoothed cursor for this many
-# frames instead of resetting (avoids jumps from depth/angle blips).
 # ---------------------------------------------------------------------------
 TRACKING_HOLD_FRAMES = 10
 
 # ---------------------------------------------------------------------------
-# Pinch detection (distance / hand_size). Works at any camera distance.
+# Pinch detection (distance / hand_size). Forgiving for comfort.
 # ---------------------------------------------------------------------------
-PINCH_ON_RATIO = 0.28
-PINCH_OFF_RATIO = 0.42
+PINCH_ON_RATIO = 0.34
+PINCH_OFF_RATIO = 0.50
+# While dragging, stay latched until pinch opens further (tolerance).
+DRAG_PINCH_OFF_RATIO = 0.62
 
 # ---------------------------------------------------------------------------
 # Click / drag timing (seconds)
 # ---------------------------------------------------------------------------
-CLICK_COOLDOWN = 0.35
-# Hold a left pinch this long to start drag instead of a click.
-DRAG_HOLD_TIME = 0.45
-# Two left pinches within this window (and each shorter than DRAG_HOLD_TIME)
-# register as a double-click.
-DOUBLE_CLICK_WINDOW = 0.40
-# Ignore a second pinch that is too close in time to the previous release.
+CLICK_COOLDOWN = 0.30
+DRAG_HOLD_TIME = 0.48
+DOUBLE_CLICK_WINDOW = 0.42
 PINCH_MIN_RELEASE_GAP = 0.08
 
 # ---------------------------------------------------------------------------
 # Scroll gesture
 # ---------------------------------------------------------------------------
-# Vertical tip motion (normalized by hand size) per scroll "tick".
 SCROLL_SENSITIVITY = 0.08
-# pyautogui scroll units per tick (positive = up).
 SCROLL_AMOUNT = 2
-# Minimum |delta| in hand-size units before scrolling fires.
-SCROLL_DEADZONE = 0.04
+SCROLL_DEADZONE = 0.045
+# Consecutive frames of scroll pose required before scroll activates.
+SCROLL_CONFIRM_FRAMES = 3
+
+# ---------------------------------------------------------------------------
+# Closed-fist / safe pose
+# ---------------------------------------------------------------------------
+# Consecutive frames of fist before SAFE engages (avoids flicker).
+FIST_CONFIRM_FRAMES = 2
 
 # ---------------------------------------------------------------------------
 # Finger-up heuristics (tip vs PIP / MCP in image coords; y grows downward)
-# Soft quality signals only — no hard palm-facing / orientation gate.
 # ---------------------------------------------------------------------------
-# Tip must be above (smaller y than) joint by this fraction of hand size.
-FINGER_UP_MARGIN = 0.08
-# Thumb "up/extended" uses x-distance from IP toward tip relative to hand size.
-THUMB_EXTENDED_MARGIN = 0.10
+FINGER_UP_MARGIN = 0.07
+THUMB_EXTENDED_MARGIN = 0.09
 
 # ---------------------------------------------------------------------------
 # Landmark indexes (MediaPipe hand)
@@ -106,7 +102,6 @@ MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP = 9, 10, 11, 12
 RING_MCP, RING_PIP, RING_DIP, RING_TIP = 13, 14, 15, 16
 PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP = 17, 18, 19, 20
 
-# Hand-size reference: wrist → middle MCP (depth proxy).
 HAND_SIZE_A = WRIST
 HAND_SIZE_B = MIDDLE_MCP
 
@@ -115,8 +110,9 @@ HAND_SIZE_B = MIDDLE_MCP
 # ---------------------------------------------------------------------------
 WINDOW_NAME = "Air Gesture Mouse — Q / Esc to quit"
 STATUS_PRINT_INTERVAL = 1.0
-# Draw on-screen gesture→action legend.
 SHOW_GESTURE_LEGEND = True
+# Compact debug lines (TIMRP / pinch ratios). Keep True for tuning.
+SHOW_DEBUG_HUD = True
 
 # pyautogui
 FAILSAFE = True

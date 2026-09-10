@@ -1,4 +1,4 @@
-"""Finger-up, pinch, and scroll-state detection from MediaPipe hand landmarks."""
+"""Finger-up, pinch, fist, and scroll-state detection from MediaPipe landmarks."""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ class Mode(Enum):
     MOVE = auto()
     LEFT_CLICK = auto()
     RIGHT_CLICK = auto()
-    MIDDLE_CLICK = auto()
     DOUBLE_CLICK = auto()
     DRAG = auto()
     SCROLL = auto()
+    SAFE = auto()
 
 
 @dataclass
@@ -54,13 +54,11 @@ class FingerState:
 class PinchRatios:
     index: float = 1.0
     middle: float = 1.0
-    ring: float = 1.0
 
     def as_dict(self) -> dict:
         return {
             "idx": self.index,
             "mid": self.middle,
-            "rng": self.ring,
         }
 
 
@@ -71,27 +69,19 @@ class GestureFrame:
     fingers: FingerState = field(default_factory=FingerState)
     pinches: PinchRatios = field(default_factory=PinchRatios)
     hand_size: float = 1.0
-    # Depth scale vs REFERENCE_HAND_SIZE (>1 when farther / smaller silhouette).
     depth_scale: float = 1.0
     index_tip_norm: Tuple[float, float] = (0.5, 0.5)
-    # Depth-compensated tip used for cursor mapping (still 0..1 frame space).
     cursor_norm: Tuple[float, float] = (0.5, 0.5)
     scroll_anchor_norm: Tuple[float, float] = (0.5, 0.5)
-    # True when index+middle extended and ring+pinky curled (scroll pose).
     scroll_pose: bool = False
-    # Which pinch is currently "on" (hysteresis applied externally via detector).
-    active_pinch: Optional[str] = None  # "index" | "middle" | "ring" | None
+    closed_fist: bool = False
+    # "index" | "middle" | None  (ring / middle-click removed for simplicity)
+    active_pinch: Optional[str] = None
 
 
 def _lm_xy(landmarks: Sequence, idx: int) -> np.ndarray:
     lm = landmarks[idx]
     return np.array([lm.x, lm.y], dtype=np.float64)
-
-
-def _lm_xyz(landmarks: Sequence, idx: int) -> np.ndarray:
-    lm = landmarks[idx]
-    z = getattr(lm, "z", 0.0)
-    return np.array([lm.x, lm.y, float(z)], dtype=np.float64)
 
 
 def hand_size(landmarks: Sequence) -> float:
@@ -103,7 +93,7 @@ def hand_size(landmarks: Sequence) -> float:
 
 
 def depth_scale_from_hand_size(size: float) -> float:
-    """Amplify tip deviation from frame center when the hand is farther (smaller)."""
+    """Amplify tip deviation from frame center when the hand is farther."""
     raw = cfg.REFERENCE_HAND_SIZE / max(size, 1e-6)
     return float(np.clip(raw, cfg.DEPTH_SCALE_MIN, cfg.DEPTH_SCALE_MAX))
 
@@ -113,10 +103,7 @@ def depth_compensate_norm(
     norm_y: float,
     scale: float,
 ) -> Tuple[float, float]:
-    """
-    Expand/contract tip position around frame center by depth scale so near/far
-    hand motion maps to a similar usable screen region.
-    """
+    """Expand/contract tip position around frame center by depth scale."""
     cx, cy = 0.5, 0.5
     x = cx + (norm_x - cx) * scale
     y = cy + (norm_y - cy) * scale
@@ -124,20 +111,14 @@ def depth_compensate_norm(
 
 
 def fingers_up(landmarks: Sequence, size: float) -> FingerState:
-    """Heuristic finger-up detection using landmark ratios (distance-invariant).
-
-    Soft image-space checks only — no hard palm-facing / yaw / pitch gate.
-    """
+    """Soft finger-up heuristics — no hard palm-facing / orientation gate."""
     margin = cfg.FINGER_UP_MARGIN * size
 
     def tip_above_pip(tip_i: int, pip_i: int) -> bool:
-        # Image y grows downward; "up" means tip.y < pip.y - margin.
         tip = _lm_xy(landmarks, tip_i)
         pip = _lm_xy(landmarks, pip_i)
         return tip[1] < pip[1] - margin
 
-    # Thumb: extended if tip is farther from palm center (wrist→middle MCP mid)
-    # than IP joint (works for mirrored selfie view and mild angle changes).
     wrist = _lm_xy(landmarks, cfg.WRIST)
     mid_mcp = _lm_xy(landmarks, cfg.MIDDLE_MCP)
     palm = (wrist + mid_mcp) / 2.0
@@ -162,12 +143,11 @@ def pinch_ratios(landmarks: Sequence, size: float) -> PinchRatios:
     return PinchRatios(
         index=float(np.linalg.norm(thumb - _lm_xy(landmarks, cfg.INDEX_TIP)) / size),
         middle=float(np.linalg.norm(thumb - _lm_xy(landmarks, cfg.MIDDLE_TIP)) / size),
-        ring=float(np.linalg.norm(thumb - _lm_xy(landmarks, cfg.RING_TIP)) / size),
     )
 
 
 def is_scroll_pose(fingers: FingerState) -> bool:
-    """Index + middle up, ring + pinky down. Thumb may be either."""
+    """Index + middle up, ring + pinky curled. Thumb may be either."""
     return (
         fingers.index
         and fingers.middle
@@ -176,27 +156,66 @@ def is_scroll_pose(fingers: FingerState) -> bool:
     )
 
 
-class GestureDetector:
-    """Stateful detector: pinch hysteresis, priority, and scroll pose."""
+def is_closed_fist(fingers: FingerState) -> bool:
+    """Index–pinky all curled → neutral / safe rest pose.
 
-    # Priority when multiple pinches could fire (exclusive).
-    PINCH_PRIORITY: Tuple[str, ...] = ("ring", "middle", "index")
+    Thumb may be tucked or lightly out; resting comfort matters more than a
+    perfect boxing fist.
+    """
+    return (
+        (not fingers.index)
+        and (not fingers.middle)
+        and (not fingers.ring)
+        and (not fingers.pinky)
+    )
+
+
+class GestureDetector:
+    """Stateful detector: pinch hysteresis, fist/scroll confirm, priority."""
+
+    # Prefer index (left click) over middle (optional right) when both close.
+    PINCH_PRIORITY: Tuple[str, ...] = ("index", "middle")
 
     def __init__(self) -> None:
-        self._active: Optional[str] = None  # which pinch is latched on
+        self._active: Optional[str] = None
+        self._scroll_streak = 0
+        self._fist_streak = 0
+        self._dragging = False
 
     def reset(self) -> None:
         self._active = None
+        self._scroll_streak = 0
+        self._fist_streak = 0
+        self._dragging = False
+
+    def set_dragging(self, dragging: bool) -> None:
+        """Allow main loop to widen pinch-off tolerance while dragging."""
+        self._dragging = bool(dragging)
 
     def update(self, landmarks: Sequence) -> GestureFrame:
         size = hand_size(landmarks)
         dscale = depth_scale_from_hand_size(size)
         fingers = fingers_up(landmarks, size)
         pinches = pinch_ratios(landmarks, size)
-        scroll_pose = is_scroll_pose(fingers)
 
-        # Scroll pose suppresses pinch clicks (finger tips are apart by design).
-        if scroll_pose:
+        raw_scroll = is_scroll_pose(fingers)
+        raw_fist = is_closed_fist(fingers)
+
+        # Temporal confirm for scroll / fist (avoid single-frame flicker).
+        if raw_scroll and not raw_fist:
+            self._scroll_streak += 1
+        else:
+            self._scroll_streak = 0
+        scroll_pose = self._scroll_streak >= cfg.SCROLL_CONFIRM_FRAMES
+
+        if raw_fist and not raw_scroll:
+            self._fist_streak += 1
+        else:
+            self._fist_streak = 0
+        closed_fist = self._fist_streak >= cfg.FIST_CONFIRM_FRAMES
+
+        # Fist and confirmed scroll suppress pinches.
+        if closed_fist or scroll_pose:
             self._active = None
             active = None
         else:
@@ -217,6 +236,7 @@ class GestureDetector:
             cursor_norm=cursor,
             scroll_anchor_norm=(float(scroll_anchor[0]), float(scroll_anchor[1])),
             scroll_pose=scroll_pose,
+            closed_fist=closed_fist,
             active_pinch=active,
         )
 
@@ -224,17 +244,14 @@ class GestureDetector:
         ratios = {
             "index": pinches.index,
             "middle": pinches.middle,
-            "ring": pinches.ring,
         }
+        off = cfg.DRAG_PINCH_OFF_RATIO if self._dragging else cfg.PINCH_OFF_RATIO
 
         if self._active is not None:
-            # Stay latched until that pinch releases past OFF threshold.
-            if ratios[self._active] > cfg.PINCH_OFF_RATIO:
+            if ratios[self._active] > off:
                 self._active = None
             return self._active
 
-        # Engage the highest-priority pinch that is below ON threshold.
-        # Prefer the closest finger if several are below threshold.
         candidates: List[Tuple[str, float]] = [
             (name, ratios[name])
             for name in self.PINCH_PRIORITY
@@ -242,7 +259,7 @@ class GestureDetector:
         ]
         if not candidates:
             return None
-        # Among candidates, pick smallest ratio (strongest pinch); then priority.
+        # Prefer strongest (smallest ratio); index wins ties via priority order.
         candidates.sort(key=lambda t: (t[1], self.PINCH_PRIORITY.index(t[0])))
         self._active = candidates[0][0]
         return self._active
@@ -256,12 +273,9 @@ def map_to_screen(
     margin: float = cfg.FRAME_MARGIN,
 ) -> Tuple[float, float]:
     """Map normalized frame coords (0..1) to screen pixels with edge margins."""
-    # After horizontal flip, x=0 is left of mirrored preview (= user's left).
     m = margin
-    # Clamp into the usable inner region, then stretch to full screen.
     x = (norm_x - m) / max(1e-6, (1.0 - 2.0 * m))
     y = (norm_y - m) / max(1e-6, (1.0 - 2.0 * m))
     x = float(np.clip(x, 0.0, 1.0))
     y = float(np.clip(y, 0.0, 1.0))
     return x * screen_w, y * screen_h
-

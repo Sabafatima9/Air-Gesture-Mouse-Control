@@ -61,23 +61,25 @@ class MouseController:
         """Move cursor toward target with velocity-adaptive exponential smoothing.
 
         Fast hand motion → less smoothing (responsive); slow motion → more
-        smoothing (stable). Avoids the laggy feel of a high fixed SMOOTHING.
+        smoothing (stable). Sub-pixel deadzone skips tiny jitter moves.
         """
         if self._smoothed is None:
             self._smoothed = (target_x, target_y)
         else:
             sx, sy = self._smoothed
             dist = math.hypot(target_x - sx, target_y - sy)
-            # Blend base ↔ fast smoothing by how far the target jumped this frame.
+            if dist < cfg.CURSOR_DEADZONE_PX:
+                x = max(1.0, min(float(self.screen_w - 2), sx))
+                y = max(1.0, min(float(self.screen_h - 2), sy))
+                return x, y
             t = min(1.0, dist / max(cfg.SMOOTHING_VELOCITY_REF, 1e-6))
             smooth = cfg.SMOOTHING + (cfg.SMOOTHING_FAST - cfg.SMOOTHING) * t
-            alpha = 1.0 - smooth  # higher smooth → smaller alpha
+            alpha = 1.0 - smooth
             sx += (target_x - sx) * alpha
             sy += (target_y - sy) * alpha
             self._smoothed = (sx, sy)
 
         x, y = self._smoothed
-        # Keep slightly inside screen edges so FAILSAFE corner is not hit by jitter.
         x = max(1.0, min(float(self.screen_w - 2), x))
         y = max(1.0, min(float(self.screen_h - 2), y))
         try:
@@ -91,9 +93,6 @@ class MouseController:
 
     def right_click(self) -> None:
         pyautogui.click(button="right")
-
-    def middle_click(self) -> None:
-        pyautogui.click(button="middle")
 
     def double_click(self) -> None:
         pyautogui.doubleClick(button="left")
@@ -116,8 +115,6 @@ class MouseController:
         """Scroll vertically. Positive ticks = scroll up."""
         if ticks == 0:
             return
-        # pyautogui.scroll: positive = up on Windows/macOS; Linux may invert
-        # depending on desktop — amount is configurable in config.SCROLL_AMOUNT.
         pyautogui.scroll(int(ticks) * cfg.SCROLL_AMOUNT)
 
     def platform_hint(self) -> str:
