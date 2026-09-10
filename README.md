@@ -22,13 +22,14 @@ Fingers on the HUD are labeled **TIMRP** = Thumb · Index · Middle · Ring · P
 
 | Gesture | Fingers / how | Mouse action |
 |--------|----------------|--------------|
-| **Move** | **Index** tip | Cursor follows (depth-compensated, smoothed) |
-| **Left click** | Pinch **thumb + index**, release quickly | Left click |
+| **Move** | Open hand; **move your hand** in any direction | Cursor moves with the hand's *motion* (relative, like a real mouse) — position in the camera frame does not matter |
+| **Clutch / release** | **Closed fist** | Releases the cursor; reopen anywhere and keep going — no jump |
+| **Left click** | Pinch **thumb + index** (cursor **freezes**), **release** to click | Left click at the frozen point |
 | **Double click** | Two quick **thumb + index** pinches | Double-click |
-| **Drag** | Pinch **thumb + index** and **hold** (~0.45–0.5s), then move; release to drop | Click-and-drag |
-| **Safe / rest** | **Closed fist** (index–pinky curled) | **No mouse action** — rest without accidents |
-| **Scroll** | **Index + middle** up, **ring + pinky** curled. Move hand **up/down** | Vertical scroll |
-| **Right click** *(optional)* | Pinch **thumb + middle** | Right click |
+| **Drag** | Pinch **thumb + index**, **hold** (~0.5s), then **move**; release to drop | Click-and-drag |
+| **Right click** | Pinch **thumb + middle**, release | Right click |
+| **Scroll** | **Index + middle** up (ring ignored), move hand **up/down** | Vertical scroll, speed-proportional |
+| **Safe / rest** | **Closed fist** | No mouse action — rest without accidents |
 
 ### Priority (reliability first)
 
@@ -37,7 +38,7 @@ Fingers on the HUD are labeled **TIMRP** = Thumb · Index · Middle · Ring · P
 3. **Thumb + index** → left click / double / drag (by timing).
 4. **Thumb + middle** → optional right click (index pinch preferred if both close).
 
-Pinch distances are **normalized by hand size**. Cursor mapping is **depth-compensated**. Drag uses a **wider pinch-off tolerance** so small finger wobble does not drop the drag.
+Pinch distances are **normalized by hand size**. The cursor is driven **relatively** (hand motion, not hand position), so every screen corner is reachable with the hand comfortably inside the camera frame. While a pinch is held the cursor **freezes** so clicks land on a still target. Drag uses a **wider pinch-off tolerance** so small finger wobble does not drop the drag.
 
 ---
 

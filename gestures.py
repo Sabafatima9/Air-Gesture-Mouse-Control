@@ -147,13 +147,10 @@ def pinch_ratios(landmarks: Sequence, size: float) -> PinchRatios:
 
 
 def is_scroll_pose(fingers: FingerState) -> bool:
-    """Index + middle up, ring + pinky curled. Thumb may be either."""
-    return (
-        fingers.index
-        and fingers.middle
-        and (not fingers.ring)
-        and (not fingers.pinky)
-    )
+    """Index + middle up, pinky curled. Ring is ignored: keeping ring curled
+    while index+middle are extended is hard on low-quality cameras, which made
+    scroll unreliable. Closed fist is checked separately and wins anyway."""
+    return fingers.index and fingers.middle and (not fingers.pinky)
 
 
 def is_closed_fist(fingers: FingerState) -> bool:

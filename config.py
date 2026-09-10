@@ -35,14 +35,22 @@ MIN_TRACKING_CONFIDENCE = 0.4
 # ---------------------------------------------------------------------------
 # Cursor mapping & smoothing
 # ---------------------------------------------------------------------------
-# Fraction of frame edges ignored when mapping absolute hand position.
+# Fraction of frame edges ignored; only used for the HUD guide box now.
 FRAME_MARGIN = 0.06
-# Relative cursor control: hand MOTION moves the cursor (like a real mouse),
-# so screen corners are reachable without putting the hand at the camera's
-# edge where tracking fails. Gain in screen-widths per full-frame hand travel.
-RELATIVE_GAIN = 1.6
-# Ease-in: blend absolute -> relative over this many frames after hand appears.
-RELATIVE_BLEND_FRAMES = 8
+# --- Relative cursor control ------------------------------------------------
+# The cursor is driven by hand MOTION (like a real mouse), never by the
+# hand's position in the camera frame. Closing the fist releases the cursor;
+# reopening re-anchors with no jump.
+# Screen px per full-frame-width of hand travel.
+RELATIVE_GAIN_X = 1.6
+# Screen px per full-frame-height of hand travel.
+RELATIVE_GAIN_Y = 1.9
+# Hand-motion (fraction of frame) below which the cursor holds still.
+MOTION_DEADZONE = 0.0035
+# Per-frame hand jump (fraction of frame) above this is treated as a tracking
+# glitch (camera stutter / hand re-detection) and re-anchored, NOT applied as
+# cursor motion. Guards the low-quality-camera case.
+MOTION_JUMP = 0.10
 # Base exponential smoothing: 0 = instant (jittery), closer to 1 = smoother/laggier.
 SMOOTHING = 0.38
 # Velocity (screen px/frame) above which smoothing eases toward SMOOTHING_FAST.
@@ -80,12 +88,11 @@ PINCH_MIN_RELEASE_GAP = 0.08
 # ---------------------------------------------------------------------------
 # Scroll gesture (continuous, speed-proportional -- like a real wheel)
 # ---------------------------------------------------------------------------
-# Scroll wheel units per one full hand-height of vertical travel.
-SCROLL_SPEED = 26.0
-# Ignore tiny per-frame jitter below this hand-size-normalized delta.
-SCROLL_DEADZONE = 0.02
+# Accumulated hand travel (fraction of frame height) per scroll tick.
+# ~0.012 = one wheel notch per ~1.2% of frame height of hand travel.
+SCROLL_SPEED = 0.012
 # Consecutive frames of scroll pose required before scroll activates.
-SCROLL_CONFIRM_FRAMES = 3
+SCROLL_CONFIRM_FRAMES = 2
 
 # ---------------------------------------------------------------------------
 # Closed-fist / safe pose

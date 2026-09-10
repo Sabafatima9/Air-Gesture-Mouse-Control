@@ -17,7 +17,7 @@ import mediapipe as mp
 import pyautogui
 
 import config as cfg
-from gestures import GestureDetector, Mode, map_to_screen
+from gestures import GestureDetector, Mode
 from mouse_controller import MouseController
 
 
@@ -84,13 +84,14 @@ class ActionState:
 
 # Short on-screen legend (simplified gesture → mouse action).
 _LEGEND_LINES = [
-    "Move: index tip",
-    "L-click: thumb+index",
+    "Move: move your hand",
+    "Clutch: fist = release",
+    "L-click: pinch thumb+index",
+    "  (cursor freezes, click on release)",
     "Dbl: 2x quick pinch",
-    "Drag: pinch + hold",
-    "Safe: closed fist",
-    "Scroll: index+middle",
-    "R-click: thumb+middle",
+    "Drag: pinch, hold, move",
+    "R-click: pinch thumb+middle",
+    "Scroll: index+middle up, move",
 ]
 
 
@@ -263,55 +264,43 @@ def process_actions(
         state.reset_pinch()
         state.pending_single_click = False
         state.prev_pinch = None
-        ay = gframe.scroll_anchor_norm[1]
-        if state.scroll_prev_y is None:
-            state.scroll_prev_y = ay
+        ax, ay = gframe.scroll_anchor_norm
+        if state.prev_cursor_norm is None:
+            state.prev_cursor_norm = (ax, ay)
         else:
-            dy = state.scroll_prev_y - ay  # positive when hand moves up
-            scaled = dy / max(gframe.hand_size, 1e-6)
-            if abs(scaled) < cfg.SCROLL_DEADZONE:
-                scaled = 0.0
-            state.scroll_prev_y = ay
-            # Continuous accumulation: any hand speed scrolls proportionally.
-            state.scroll_accum += scaled * cfg.SCROLL_SPEED
-            whole = int(state.scroll_accum)
-            if whole != 0:
-                state.scroll_accum -= whole
-                mouse.scroll(whole)
+            dy = state.prev_cursor_norm[1] - ay  # positive when hand moves up
+            state.prev_cursor_norm = (ax, ay)
+            # Continuous accumulation: hand up = scroll up, down = down,
+            # speed-proportional like a real wheel.
+            state.scroll_accum += dy
+            ticks = int(state.scroll_accum / cfg.SCROLL_SPEED)
+            if ticks != 0:
+                state.scroll_accum -= ticks * cfg.SCROLL_SPEED
+                mouse.scroll(ticks)
                 state.last_action_time = now
         state.mode = Mode.SCROLL
         return Mode.SCROLL
 
     state.reset_scroll()
 
-    # --- Cursor move ---------------------------------------------------------
-    # Relative control: hand MOTION moves the cursor (like a real mouse), so
-    # screen corners are reachable with the hand comfortably inside the camera
-    # frame. On the first frames after the hand appears, blend from the
-    # absolute fingertip position so the cursor starts where the user expects.
+    # --- Cursor move: pure RELATIVE ------------------------------------------
+    # Hand MOTION moves the cursor, never the hand's position in the camera
+    # frame. While a pinch is held the cursor freezes, so clicks land on a
+    # still target; releasing the pinch fires the click at that point.
     cx, cy = gframe.cursor_norm
-    if state.prev_cursor_norm is None or mouse.smoothed is None:
-        sx, sy = map_to_screen(cx, cy, mouse.screen_w, mouse.screen_h)
-        mouse.move_to_smoothed(sx, sy)
-        state.relative_blend = 0
-    else:
-        dxn = cx - state.prev_cursor_norm[0]
-        dyn = cy - state.prev_cursor_norm[1]
-        dx = dxn * mouse.screen_w * cfg.RELATIVE_GAIN
-        dy = dyn * mouse.screen_h * cfg.RELATIVE_GAIN
-        if state.relative_blend < cfg.RELATIVE_BLEND_FRAMES:
-            # Ease-in: mix absolute target with relative delta.
-            state.relative_blend += 1
-            w = state.relative_blend / cfg.RELATIVE_BLEND_FRAMES
-            ax, ay = map_to_screen(cx, cy, mouse.screen_w, mouse.screen_h)
-            px, py = mouse.smoothed
-            mouse.move_to_smoothed(
-                px + (ax - px) * (1.0 - w) + dx * w,
-                py + (ay - py) * (1.0 - w) + dy * w,
-            )
-        else:
-            mouse.move_by(dx, dy)
-    state.prev_cursor_norm = (cx, cy)
+    if pinch is None:
+        if state.prev_cursor_norm is not None:
+            dxn = cx - state.prev_cursor_norm[0]
+            dyn = cy - state.prev_cursor_norm[1]
+            if abs(dxn) > cfg.MOTION_JUMP or abs(dyn) > cfg.MOTION_JUMP:
+                # Implausible jump (tracking glitch / re-detection): re-anchor.
+                pass
+            elif abs(dxn) >= cfg.MOTION_DEADZONE or abs(dyn) >= cfg.MOTION_DEADZONE:
+                mouse.move_by(
+                    dxn * mouse.screen_w * cfg.RELATIVE_GAIN_X,
+                    dyn * mouse.screen_h * cfg.RELATIVE_GAIN_Y,
+                )
+        state.prev_cursor_norm = (cx, cy)
 
     # --- Right click: thumb–middle pinch (optional, rising edge) ------------
     if pinch == "middle":
@@ -345,6 +334,18 @@ def process_actions(
                 state.left_held_for_drag = True
                 detector.set_dragging(True)
                 state.last_action_time = now
+            # Dragging: hand motion moves the cursor with the button held.
+            if state.prev_cursor_norm is not None:
+                dxn = cx - state.prev_cursor_norm[0]
+                dyn = cy - state.prev_cursor_norm[1]
+                if abs(dxn) > cfg.MOTION_JUMP or abs(dyn) > cfg.MOTION_JUMP:
+                    pass
+                elif abs(dxn) >= cfg.MOTION_DEADZONE or abs(dyn) >= cfg.MOTION_DEADZONE:
+                    mouse.move_by(
+                        dxn * mouse.screen_w * cfg.RELATIVE_GAIN_X,
+                        dyn * mouse.screen_h * cfg.RELATIVE_GAIN_Y,
+                    )
+            state.prev_cursor_norm = (cx, cy)
             state.prev_pinch = pinch
             state.mode = Mode.DRAG
             return Mode.DRAG
@@ -411,8 +412,9 @@ def main() -> None:
     )
     print("FAILSAFE: fling cursor to top-left corner to emergency-stop.")
     print(
-        "Gestures: Move=index | L/Dbl/Drag=thumb+index | "
-        "Safe=fist | Scroll=index+middle | R=thumb+middle (optional)"
+        "Gestures: Move=move hand (relative) | Clutch=fist | "
+        "L/Dbl/Drag=thumb+index (click on release) | "
+        "R=thumb+middle | Scroll=index+middle up + move"
     )
 
     landmarker = create_landmarker()
