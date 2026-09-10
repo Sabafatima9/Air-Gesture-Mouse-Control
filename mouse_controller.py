@@ -35,6 +35,7 @@ class MouseController:
         pyautogui.PAUSE = cfg.PAUSE
         self.screen_w, self.screen_h = pyautogui.size()
         self._smoothed: Optional[Tuple[float, float]] = None
+        self._residual: Tuple[float, float] = (0.0, 0.0)
         self._dragging = False
 
     @property
@@ -43,6 +44,7 @@ class MouseController:
 
     def reset_smoothing(self) -> None:
         self._smoothed = None
+        self._residual = (0.0, 0.0)
 
     def hold_smoothed_position(self) -> Optional[Tuple[float, float]]:
         """Re-apply last smoothed cursor without advancing (tracking-hold grace)."""
@@ -65,18 +67,25 @@ class MouseController:
         """
         if self._smoothed is None:
             self._smoothed = (target_x, target_y)
+            self._residual = (0.0, 0.0)
         else:
             sx, sy = self._smoothed
-            dist = math.hypot(target_x - sx, target_y - sy)
+            rx, ry = self._residual
+            dx = target_x - sx + rx
+            dy = target_y - sy + ry
+            dist = math.hypot(dx, dy)
             if dist < cfg.CURSOR_DEADZONE_PX:
+                # Accumulate tiny motions so slow precise aiming does not drift.
+                self._residual = (dx, dy)
                 x = max(1.0, min(float(self.screen_w - 2), sx))
                 y = max(1.0, min(float(self.screen_h - 2), sy))
                 return x, y
+            self._residual = (0.0, 0.0)
             t = min(1.0, dist / max(cfg.SMOOTHING_VELOCITY_REF, 1e-6))
             smooth = cfg.SMOOTHING + (cfg.SMOOTHING_FAST - cfg.SMOOTHING) * t
             alpha = 1.0 - smooth
-            sx += (target_x - sx) * alpha
-            sy += (target_y - sy) * alpha
+            sx += dx * alpha
+            sy += dy * alpha
             self._smoothed = (sx, sy)
 
         x, y = self._smoothed

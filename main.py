@@ -465,12 +465,19 @@ def main() -> None:
                 if mode != Mode.SAFE:
                     mouse.hold_smoothed_position()
             else:
+                # Hand lost past grace: flush a pending single click first so a
+                # completed pinch is not silently swallowed by a tracking blip.
+                if state.pending_single_click:
+                    if now - state.last_left_click_time >= cfg.CLICK_COOLDOWN:
+                        mouse.left_click()
+                        state.last_left_click_time = now
+                        state.last_action_time = now
+                    state.pending_single_click = False
                 detector.reset()
                 mouse.ensure_released()
                 mouse.reset_smoothing()
                 state.reset_pinch()
                 state.reset_scroll()
-                state.pending_single_click = False
                 state.prev_pinch = None
                 state.mode = Mode.IDLE
 

@@ -181,12 +181,14 @@ class GestureDetector:
         self._scroll_streak = 0
         self._fist_streak = 0
         self._dragging = False
+        self._pinch_rearm = False
 
     def reset(self) -> None:
         self._active = None
         self._scroll_streak = 0
         self._fist_streak = 0
         self._dragging = False
+        self._pinch_rearm = False
 
     def set_dragging(self, dragging: bool) -> None:
         """Allow main loop to widen pinch-off tolerance while dragging."""
@@ -214,9 +216,13 @@ class GestureDetector:
             self._fist_streak = 0
         closed_fist = self._fist_streak >= cfg.FIST_CONFIRM_FRAMES
 
-        # Fist and confirmed scroll suppress pinches.
+        # Fist and confirmed scroll suppress pinches. After suppression, wait
+        # for one fully-open frame before allowing a NEW pinch to engage, so
+        # the thumb sweeping past the middle finger on fist->point cannot
+        # register as a phantom right-click.
         if closed_fist or scroll_pose:
             self._active = None
+            self._pinch_rearm = True
             active = None
         else:
             active = self._update_pinch(pinches)
@@ -251,6 +257,13 @@ class GestureDetector:
             if ratios[self._active] > off:
                 self._active = None
             return self._active
+
+        if self._pinch_rearm:
+            # Require all ratios clearly open before re-arming pinch engage.
+            if all(r > off for r in ratios.values()):
+                self._pinch_rearm = False
+            else:
+                return None
 
         candidates: List[Tuple[str, float]] = [
             (name, ratios[name])
