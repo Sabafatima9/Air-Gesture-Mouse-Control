@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.Python
+*.egg-info/
+hand_landmarker.task
