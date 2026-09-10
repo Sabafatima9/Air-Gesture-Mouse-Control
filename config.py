@@ -35,8 +35,14 @@ MIN_TRACKING_CONFIDENCE = 0.4
 # ---------------------------------------------------------------------------
 # Cursor mapping & smoothing
 # ---------------------------------------------------------------------------
-# Fraction of frame edges ignored so the fingertip can reach screen edges.
+# Fraction of frame edges ignored when mapping absolute hand position.
 FRAME_MARGIN = 0.06
+# Relative cursor control: hand MOTION moves the cursor (like a real mouse),
+# so screen corners are reachable without putting the hand at the camera's
+# edge where tracking fails. Gain in screen-widths per full-frame hand travel.
+RELATIVE_GAIN = 1.6
+# Ease-in: blend absolute -> relative over this many frames after hand appears.
+RELATIVE_BLEND_FRAMES = 8
 # Base exponential smoothing: 0 = instant (jittery), closer to 1 = smoother/laggier.
 SMOOTHING = 0.38
 # Velocity (screen px/frame) above which smoothing eases toward SMOOTHING_FAST.
@@ -72,11 +78,12 @@ DOUBLE_CLICK_WINDOW = 0.42
 PINCH_MIN_RELEASE_GAP = 0.08
 
 # ---------------------------------------------------------------------------
-# Scroll gesture
+# Scroll gesture (continuous, speed-proportional -- like a real wheel)
 # ---------------------------------------------------------------------------
-SCROLL_SENSITIVITY = 0.08
-SCROLL_AMOUNT = 2
-SCROLL_DEADZONE = 0.045
+# Scroll wheel units per one full hand-height of vertical travel.
+SCROLL_SPEED = 26.0
+# Ignore tiny per-frame jitter below this hand-size-normalized delta.
+SCROLL_DEADZONE = 0.02
 # Consecutive frames of scroll pose required before scroll activates.
 SCROLL_CONFIRM_FRAMES = 3
 

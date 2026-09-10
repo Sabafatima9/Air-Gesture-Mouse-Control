@@ -36,6 +36,7 @@ class MouseController:
         self.screen_w, self.screen_h = pyautogui.size()
         self._smoothed: Optional[Tuple[float, float]] = None
         self._residual: Tuple[float, float] = (0.0, 0.0)
+        self._scroll_carry = 0.0
         self._dragging = False
 
     @property
@@ -120,11 +121,29 @@ class MouseController:
         """Release any held drag (e.g. hand lost past hold grace)."""
         self.mouse_up()
 
-    def scroll(self, ticks: int) -> None:
-        """Scroll vertically. Positive ticks = scroll up."""
-        if ticks == 0:
+    def scroll(self, amount: float) -> None:
+        """Scroll vertically. Positive = up. Accepts fractional amounts and
+        accumulates the remainder so slow scrolling is smooth, not lossy."""
+        self._scroll_carry += float(amount)
+        whole = int(self._scroll_carry)
+        if whole == 0:
             return
-        pyautogui.scroll(int(ticks) * cfg.SCROLL_AMOUNT)
+        self._scroll_carry -= whole
+        pyautogui.scroll(whole)
+
+    def move_by(self, dx: float, dy: float) -> Tuple[float, float]:
+        """Relative move: shift the smoothed cursor target by (dx, dy) px."""
+        if self._smoothed is None:
+            self._smoothed = (
+                float(self.screen_w) / 2.0,
+                float(self.screen_h) / 2.0,
+            )
+        sx, sy = self._smoothed
+        return self.move_to_smoothed(sx + dx, sy + dy)
+
+    @property
+    def smoothed(self) -> Optional[Tuple[float, float]]:
+        return self._smoothed
 
     def platform_hint(self) -> str:
         return sys.platform

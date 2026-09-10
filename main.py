@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 import urllib.request
-from typing import Optional
+from typing import Optional, Tuple
 
 import cv2
 import mediapipe as mp
@@ -58,6 +58,9 @@ class ActionState:
         self.pending_click_time = 0.0
         self.last_action_time = 0.0
         self.scroll_prev_y: Optional[float] = None
+        self.scroll_accum = 0.0
+        self.prev_cursor_norm: Optional[Tuple[float, float]] = None
+        self.relative_blend = 0
         self.last_status = ""
         self.last_status_t = 0.0
         self.hold_frames_left = 0
@@ -72,6 +75,11 @@ class ActionState:
 
     def reset_scroll(self) -> None:
         self.scroll_prev_y = None
+        self.scroll_accum = 0.0
+
+    def reset_tracking(self) -> None:
+        self.prev_cursor_norm = None
+        self.relative_blend = 0
 
 
 # Short on-screen legend (simplified gesture → mouse action).
@@ -261,27 +269,49 @@ def process_actions(
         else:
             dy = state.scroll_prev_y - ay  # positive when hand moves up
             scaled = dy / max(gframe.hand_size, 1e-6)
-            if abs(scaled) >= cfg.SCROLL_DEADZONE:
-                ticks = int(scaled / cfg.SCROLL_SENSITIVITY)
-                if ticks != 0:
-                    mouse.scroll(ticks)
-                    state.scroll_prev_y = ay
-                    state.last_action_time = now
-            else:
-                state.scroll_prev_y = 0.85 * state.scroll_prev_y + 0.15 * ay
+            if abs(scaled) < cfg.SCROLL_DEADZONE:
+                scaled = 0.0
+            state.scroll_prev_y = ay
+            # Continuous accumulation: any hand speed scrolls proportionally.
+            state.scroll_accum += scaled * cfg.SCROLL_SPEED
+            whole = int(state.scroll_accum)
+            if whole != 0:
+                state.scroll_accum -= whole
+                mouse.scroll(whole)
+                state.last_action_time = now
         state.mode = Mode.SCROLL
         return Mode.SCROLL
 
     state.reset_scroll()
 
-    # --- Cursor move (depth-compensated tip → screen) -----------------------
-    sx, sy = map_to_screen(
-        gframe.cursor_norm[0],
-        gframe.cursor_norm[1],
-        mouse.screen_w,
-        mouse.screen_h,
-    )
-    mouse.move_to_smoothed(sx, sy)
+    # --- Cursor move ---------------------------------------------------------
+    # Relative control: hand MOTION moves the cursor (like a real mouse), so
+    # screen corners are reachable with the hand comfortably inside the camera
+    # frame. On the first frames after the hand appears, blend from the
+    # absolute fingertip position so the cursor starts where the user expects.
+    cx, cy = gframe.cursor_norm
+    if state.prev_cursor_norm is None or mouse.smoothed is None:
+        sx, sy = map_to_screen(cx, cy, mouse.screen_w, mouse.screen_h)
+        mouse.move_to_smoothed(sx, sy)
+        state.relative_blend = 0
+    else:
+        dxn = cx - state.prev_cursor_norm[0]
+        dyn = cy - state.prev_cursor_norm[1]
+        dx = dxn * mouse.screen_w * cfg.RELATIVE_GAIN
+        dy = dyn * mouse.screen_h * cfg.RELATIVE_GAIN
+        if state.relative_blend < cfg.RELATIVE_BLEND_FRAMES:
+            # Ease-in: mix absolute target with relative delta.
+            state.relative_blend += 1
+            w = state.relative_blend / cfg.RELATIVE_BLEND_FRAMES
+            ax, ay = map_to_screen(cx, cy, mouse.screen_w, mouse.screen_h)
+            px, py = mouse.smoothed
+            mouse.move_to_smoothed(
+                px + (ax - px) * (1.0 - w) + dx * w,
+                py + (ay - py) * (1.0 - w) + dy * w,
+            )
+        else:
+            mouse.move_by(dx, dy)
+    state.prev_cursor_norm = (cx, cy)
 
     # --- Right click: thumb–middle pinch (optional, rising edge) ------------
     if pinch == "middle":
@@ -478,6 +508,7 @@ def main() -> None:
                 mouse.reset_smoothing()
                 state.reset_pinch()
                 state.reset_scroll()
+                state.reset_tracking()
                 state.prev_pinch = None
                 state.mode = Mode.IDLE
 
