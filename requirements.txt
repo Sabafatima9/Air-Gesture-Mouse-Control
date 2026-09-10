@@ -1,0 +1,10 @@
+# Air Gesture Mouse Control
+# Install with:  pip install -r requirements.txt
+
+opencv-contrib-python>=4.8.0
+mediapipe>=0.10.9        # Tasks API (no legacy mp.solutions needed)
+pyautogui>=0.9.54
+numpy>=1.22.0
+
+# Note: Windows/macOS Python includes Tkinter by default (not used here).
+# Camera access may need permission on macOS.
