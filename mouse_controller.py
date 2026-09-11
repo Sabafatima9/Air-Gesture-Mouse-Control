@@ -1,4 +1,4 @@
-"""Cross-platform mouse actions via pyautogui.
+﻿"""Cross-platform mouse actions via pyautogui.
 
 Works on Linux, macOS, and Windows. No OS-specific APIs are used.
 
@@ -8,12 +8,12 @@ Linux extras (install as needed for your desktop):
   - python3-xlib (X11); Wayland may need extra permissions or XWayland
 
 macOS: grant Camera + Accessibility (mouse control) to the Terminal/Python
-app in System Settings → Privacy & Security.
+app in System Settings -> Privacy & Security.
 
 Windows: usually works out of the box after pip install.
 
 FAILSAFE: moving the cursor into the extreme top-left corner raises
-FailSafeException and stops the script — intentional emergency stop.
+FailSafeException and stops the script -- intentional emergency stop.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class MouseController:
     def move_to_smoothed(self, target_x: float, target_y: float) -> Tuple[float, float]:
         """Move cursor toward target with velocity-adaptive exponential smoothing.
 
-        Fast hand motion → less smoothing (responsive); slow motion → more
+        Fast hand motion -> less smoothing (responsive); slow motion -> more
         smoothing (stable). Sub-pixel deadzone skips tiny jitter moves.
         """
         if self._smoothed is None:
@@ -122,14 +122,25 @@ class MouseController:
         self.mouse_up()
 
     def scroll(self, amount: float) -> None:
-        """Scroll vertically. Positive = up. Accepts fractional amounts and
-        accumulates the remainder so slow scrolling is smooth, not lossy."""
+        """Scroll vertically in wheel notches. Positive = up.
+
+        Fractional notches accumulate so slow scrolling is smooth, not lossy.
+
+        Windows quirk: pyautogui passes the value straight into mouse_event's
+        wheel dwData, which Windows counts in DETENTS (WHEEL_DELTA = 120 per
+        notch). pyautogui.scroll(1) therefore scrolls only 1/120 of a notch --
+        effectively nothing. Convert notches -> detents on win32; Linux/macOS
+        expect notches directly.
+        """
         self._scroll_carry += float(amount)
-        whole = int(self._scroll_carry)
-        if whole == 0:
+        notches = int(self._scroll_carry)
+        if notches == 0:
             return
-        self._scroll_carry -= whole
-        pyautogui.scroll(whole)
+        self._scroll_carry -= notches
+        if sys.platform == "win32":
+            pyautogui.scroll(notches * cfg.WHEEL_DELTA)
+        else:
+            pyautogui.scroll(notches)
 
     def move_by(self, dx: float, dy: float) -> Tuple[float, float]:
         """Relative move: shift the smoothed cursor target by (dx, dy) px."""

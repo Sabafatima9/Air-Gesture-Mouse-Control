@@ -35,9 +35,7 @@ class FingerState:
     pinky: bool = False
 
     def count_up(self) -> int:
-        return sum(
-            (self.thumb, self.index, self.middle, self.ring, self.pinky)
-        )
+        return sum((self.thumb, self.index, self.middle, self.ring, self.pinky))
 
     def label(self) -> str:
         bits = [
@@ -69,13 +67,15 @@ class GestureFrame:
     fingers: FingerState = field(default_factory=FingerState)
     pinches: PinchRatios = field(default_factory=PinchRatios)
     hand_size: float = 1.0
+    # EMA of hand size: stable depth estimate for gain normalization.
+    hand_size_smooth: float = 1.0
+    # HUD/debug only (motion is purely relative now).
     depth_scale: float = 1.0
-    index_tip_norm: Tuple[float, float] = (0.5, 0.5)
-    cursor_norm: Tuple[float, float] = (0.5, 0.5)
-    scroll_anchor_norm: Tuple[float, float] = (0.5, 0.5)
+    # Filtered palm centroid -- THE cursor motion anchor.
+    motion_anchor: Tuple[float, float] = (0.5, 0.5)
     scroll_pose: bool = False
     closed_fist: bool = False
-    # "index" | "middle" | None  (ring / middle-click removed for simplicity)
+    # "index" | "middle" | None
     active_pinch: Optional[str] = None
 
 
@@ -84,8 +84,61 @@ def _lm_xy(landmarks: Sequence, idx: int) -> np.ndarray:
     return np.array([lm.x, lm.y], dtype=np.float64)
 
 
+def palm_anchor(landmarks: Sequence) -> Tuple[float, float]:
+    """Motion anchor: centroid of wrist + the four finger MCP joints.
+
+    This point barely moves when fingers open or close (unlike any fingertip),
+    so pinching cannot shake the cursor; it is the most stable place to drive
+    relative motion from.
+    """
+    pts = np.mean([_lm_xy(landmarks, i) for i in cfg.MOTION_ANCHOR_POINTS], axis=0)
+    return float(pts[0]), float(pts[1])
+
+
+class AnchorFilter:
+    """Velocity-adaptive exponential filter on the palm anchor.
+
+    Still hand -> strong smoothing (steady cursor, jitter killed); moving
+    hand -> weak smoothing (responsive, no rubber-band lag). Keeps the cursor
+    stable while aiming a click without feeling laggy.
+    """
+
+    def __init__(self) -> None:
+        self._x: Optional[float] = None
+        self._y: Optional[float] = None
+        self._speed: float = 0.0
+
+    def reset(self) -> None:
+        self._x = None
+        self._y = None
+        self._speed = 0.0
+
+    def update(self, x: float, y: float) -> Tuple[float, float]:
+        if self._x is None:
+            self._x, self._y = float(x), float(y)
+            self._speed = 0.0
+            return self._x, self._y
+        dx = x - self._x
+        dy = y - self._y
+        step = float(np.hypot(dx, dy))
+        if step > cfg.ANCHOR_SNAP:
+            # Tracking glitch / re-detection: snap to the new position instead
+            # of gliding there (the main loop's jump guard drops that delta).
+            self._x, self._y = float(x), float(y)
+            return self._x, self._y
+        # Smoothed speed estimate -> gentle alpha adaptation across frames.
+        self._speed += cfg.ANCHOR_SPEED_EMA * (step - self._speed)
+        t = min(1.0, self._speed / max(cfg.ANCHOR_SPEED_REF, 1e-6))
+        alpha = cfg.ANCHOR_ALPHA_SLOW + (
+            cfg.ANCHOR_ALPHA_FAST - cfg.ANCHOR_ALPHA_SLOW
+        ) * t
+        self._x += dx * alpha
+        self._y += dy * alpha
+        return self._x, self._y
+
+
 def hand_size(landmarks: Sequence) -> float:
-    """Wrist → middle MCP distance in normalized image coords (depth proxy)."""
+    """Wrist -> middle MCP distance in normalized image coords (depth proxy)."""
     a = _lm_xy(landmarks, cfg.HAND_SIZE_A)
     b = _lm_xy(landmarks, cfg.HAND_SIZE_B)
     size = float(np.linalg.norm(a - b))
@@ -93,25 +146,13 @@ def hand_size(landmarks: Sequence) -> float:
 
 
 def depth_scale_from_hand_size(size: float) -> float:
-    """Amplify tip deviation from frame center when the hand is farther."""
+    """HUD/debug value: how much farther than reference the hand is."""
     raw = cfg.REFERENCE_HAND_SIZE / max(size, 1e-6)
     return float(np.clip(raw, cfg.DEPTH_SCALE_MIN, cfg.DEPTH_SCALE_MAX))
 
 
-def depth_compensate_norm(
-    norm_x: float,
-    norm_y: float,
-    scale: float,
-) -> Tuple[float, float]:
-    """Expand/contract tip position around frame center by depth scale."""
-    cx, cy = 0.5, 0.5
-    x = cx + (norm_x - cx) * scale
-    y = cy + (norm_y - cy) * scale
-    return float(x), float(y)
-
-
 def fingers_up(landmarks: Sequence, size: float) -> FingerState:
-    """Soft finger-up heuristics — no hard palm-facing / orientation gate."""
+    """Soft finger-up heuristics -- no hard palm-facing / orientation gate."""
     margin = cfg.FINGER_UP_MARGIN * size
 
     def tip_above_pip(tip_i: int, pip_i: int) -> bool:
@@ -154,7 +195,7 @@ def is_scroll_pose(fingers: FingerState) -> bool:
 
 
 def is_closed_fist(fingers: FingerState) -> bool:
-    """Index–pinky all curled → neutral / safe rest pose.
+    """Index-pinky all curled = clutch / release pose.
 
     Thumb may be tucked or lightly out; resting comfort matters more than a
     perfect boxing fist.
@@ -170,7 +211,7 @@ def is_closed_fist(fingers: FingerState) -> bool:
 class GestureDetector:
     """Stateful detector: pinch hysteresis, fist/scroll confirm, priority."""
 
-    # Prefer index (left click) over middle (optional right) when both close.
+    # Prefer index (left click) over middle (right) when both close.
     PINCH_PRIORITY: Tuple[str, ...] = ("index", "middle")
 
     def __init__(self) -> None:
@@ -179,6 +220,8 @@ class GestureDetector:
         self._fist_streak = 0
         self._dragging = False
         self._pinch_rearm = False
+        self._anchor = AnchorFilter()
+        self._size_ema: Optional[float] = None
 
     def reset(self) -> None:
         self._active = None
@@ -186,6 +229,8 @@ class GestureDetector:
         self._fist_streak = 0
         self._dragging = False
         self._pinch_rearm = False
+        self._anchor.reset()
+        self._size_ema = None
 
     def set_dragging(self, dragging: bool) -> None:
         """Allow main loop to widen pinch-off tolerance while dragging."""
@@ -193,6 +238,10 @@ class GestureDetector:
 
     def update(self, landmarks: Sequence) -> GestureFrame:
         size = hand_size(landmarks)
+        if self._size_ema is None:
+            self._size_ema = size
+        else:
+            self._size_ema += cfg.HAND_SIZE_EMA * (size - self._size_ema)
         dscale = depth_scale_from_hand_size(size)
         fingers = fingers_up(landmarks, size)
         pinches = pinch_ratios(landmarks, size)
@@ -224,20 +273,16 @@ class GestureDetector:
         else:
             active = self._update_pinch(pinches)
 
-        index_tip = _lm_xy(landmarks, cfg.INDEX_TIP)
-        mid_tip = _lm_xy(landmarks, cfg.MIDDLE_TIP)
-        scroll_anchor = (index_tip + mid_tip) / 2.0
-        tip_x, tip_y = float(index_tip[0]), float(index_tip[1])
-        cursor = depth_compensate_norm(tip_x, tip_y, dscale)
+        ax, ay = palm_anchor(landmarks)
+        motion_anchor = self._anchor.update(ax, ay)
 
         return GestureFrame(
             fingers=fingers,
             pinches=pinches,
             hand_size=size,
+            hand_size_smooth=self._size_ema,
             depth_scale=dscale,
-            index_tip_norm=(tip_x, tip_y),
-            cursor_norm=cursor,
-            scroll_anchor_norm=(float(scroll_anchor[0]), float(scroll_anchor[1])),
+            motion_anchor=motion_anchor,
             scroll_pose=scroll_pose,
             closed_fist=closed_fist,
             active_pinch=active,
@@ -273,19 +318,3 @@ class GestureDetector:
         candidates.sort(key=lambda t: (t[1], self.PINCH_PRIORITY.index(t[0])))
         self._active = candidates[0][0]
         return self._active
-
-
-def map_to_screen(
-    norm_x: float,
-    norm_y: float,
-    screen_w: int,
-    screen_h: int,
-    margin: float = cfg.FRAME_MARGIN,
-) -> Tuple[float, float]:
-    """Map normalized frame coords (0..1) to screen pixels with edge margins."""
-    m = margin
-    x = (norm_x - m) / max(1e-6, (1.0 - 2.0 * m))
-    y = (norm_y - m) / max(1e-6, (1.0 - 2.0 * m))
-    x = float(np.clip(x, 0.0, 1.0))
-    y = float(np.clip(y, 0.0, 1.0))
-    return x * screen_w, y * screen_h

@@ -1,7 +1,7 @@
-"""
-Air Gesture Mouse Control — entry point.
+﻿"""
+Air Gesture Mouse Control -- entry point.
 
-Webcam → MediaPipe Hand Landmarker → gestures → pyautogui mouse actions.
+Webcam -> MediaPipe Hand Landmarker -> gestures -> pyautogui mouse actions.
 Front-facing (selfie) camera: preview is mirrored so left=left.
 Press Q or Esc to quit.
 """
@@ -46,21 +46,28 @@ def create_landmarker():
 
 
 class ActionState:
-    """Tracks pinch timing for click / double-click / drag."""
+    """Anchor motion, pinch timing for clicks/drags, and scroll state."""
 
     def __init__(self) -> None:
         self.mode = Mode.IDLE
         self.prev_pinch: Optional[str] = None
+        # Left click / double click / drag
         self.left_pinch_start: Optional[float] = None
         self.left_held_for_drag = False
         self.last_left_click_time = 0.0
         self.pending_single_click = False
         self.pending_click_time = 0.0
+        # Right click (fires on pinch RELEASE, exactly like the left click)
+        self.right_pinch_start: Optional[float] = None
         self.last_action_time = 0.0
+        # Scroll: its own anchor + accumulator so it never disturbs the cursor
         self.scroll_prev_y: Optional[float] = None
         self.scroll_accum = 0.0
-        self.prev_cursor_norm: Optional[Tuple[float, float]] = None
-        self.relative_blend = 0
+        self.scroll_gap = 0
+        # Relative cursor motion (palm anchor)
+        self.anchor_prev: Optional[Tuple[float, float]] = None
+        self.motion_resid: Tuple[float, float] = (0.0, 0.0)
+        # HUD / status echo
         self.last_status = ""
         self.last_status_t = 0.0
         self.hold_frames_left = 0
@@ -76,21 +83,23 @@ class ActionState:
     def reset_scroll(self) -> None:
         self.scroll_prev_y = None
         self.scroll_accum = 0.0
+        self.scroll_gap = 0
 
     def reset_tracking(self) -> None:
-        self.prev_cursor_norm = None
-        self.relative_blend = 0
+        self.anchor_prev = None
+        self.motion_resid = (0.0, 0.0)
 
 
-# Short on-screen legend (simplified gesture → mouse action).
+# Short on-screen legend (simplified gesture -> mouse action).
 _LEGEND_LINES = [
-    "Move: move your hand",
-    "Clutch: fist = release",
-    "L-click: pinch thumb+index",
-    "  (cursor freezes, click on release)",
-    "Dbl: 2x quick pinch",
-    "Drag: pinch, hold, move",
-    "R-click: pinch thumb+middle",
+    "Move: move your hand (relative)",
+    "Clutch: closed fist = release",
+    "L-click: pinch thumb+index,",
+    "   cursor follows, release = click",
+    "Dbl: two quick pinches",
+    "Drag: pinch, hold 0.5s, move",
+    "R-click: pinch thumb+middle,",
+    "   cursor follows, release = click",
     "Scroll: index+middle up, move",
 ]
 
@@ -221,6 +230,14 @@ def _draw_landmarks(frame, landmarks, active_pinch: Optional[str]) -> None:
     for idx, color in tip_colors.items():
         cv2.circle(frame, px(idx), 7, color, -1, cv2.LINE_AA)
 
+    # Palm anchor: the point that drives the cursor.
+    ax = sum(landmarks[i].x for i in cfg.MOTION_ANCHOR_POINTS) / len(
+        cfg.MOTION_ANCHOR_POINTS
+    )
+    ay = sum(landmarks[i].y for i in cfg.MOTION_ANCHOR_POINTS) / len(
+        cfg.MOTION_ANCHOR_POINTS
+    )
+    cv2.circle(frame, (int(ax * w), int(ay * h)), 9, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.line(frame, px(cfg.WRIST), px(cfg.MIDDLE_MCP), (100, 180, 255), 2, cv2.LINE_AA)
     cv2.circle(frame, px(cfg.WRIST), 5, (100, 180, 255), -1, cv2.LINE_AA)
 
@@ -235,6 +252,48 @@ def _draw_landmarks(frame, landmarks, active_pinch: Optional[str]) -> None:
     cv2.rectangle(frame, (x0, y0), (x1, y1), (50, 50, 80), 1, cv2.LINE_AA)
 
 
+def _depth_gain(gframe) -> float:
+    """Scale palm deltas so cursor speed does not depend on hand distance."""
+    gain = cfg.REFERENCE_HAND_SIZE / max(gframe.hand_size_smooth, 1e-6)
+    return min(cfg.MOTION_DEPTH_MAX, max(cfg.MOTION_DEPTH_MIN, gain))
+
+
+def _apply_relative_motion(gframe, state: ActionState, mouse: MouseController) -> None:
+    """Move the cursor by palm motion only (relative, position-free).
+
+    Runs on every non-fist, non-scroll frame -- including while a pinch is
+    held, so the cursor keeps following the hand while aiming a click; the
+    pinch RELEASE is what clicks. Sub-deadzone motion is accumulated as
+    residue (slow precise aiming still moves; alternating jitter cancels).
+    The anchor is re-set every frame, so fist exits, scroll exits and
+    tracking glitches never jump the cursor.
+    """
+    ax, ay = gframe.motion_anchor
+    if state.anchor_prev is None:
+        state.anchor_prev = (ax, ay)
+        state.motion_resid = (0.0, 0.0)
+        return
+    rx, ry = state.motion_resid
+    dxn = ax - state.anchor_prev[0] + rx
+    dyn = ay - state.anchor_prev[1] + ry
+    state.motion_resid = (0.0, 0.0)
+    if abs(dxn) > cfg.MOTION_JUMP or abs(dyn) > cfg.MOTION_JUMP:
+        # Tracking glitch: drop the delta; never carried as residue either.
+        state.anchor_prev = (ax, ay)
+        return
+    if abs(dxn) < cfg.MOTION_DEADZONE and abs(dyn) < cfg.MOTION_DEADZONE:
+        # Below the deadzone: remember it, do not move yet.
+        state.motion_resid = (dxn, dyn)
+        state.anchor_prev = (ax, ay)
+        return
+    gain = _depth_gain(gframe)
+    mouse.move_by(
+        dxn * gain * mouse.screen_w * cfg.RELATIVE_GAIN_X,
+        dyn * gain * mouse.screen_h * cfg.RELATIVE_GAIN_Y,
+    )
+    state.anchor_prev = (ax, ay)
+
+
 def process_actions(
     gframe,
     state: ActionState,
@@ -243,14 +302,19 @@ def process_actions(
     now: float,
 ) -> Mode:
     """Apply mouse actions from gesture frame. Returns display mode."""
-    # --- Closed fist: SAFE / NO ACTION (highest comfort priority) -----------
+    # --- Closed fist: CLUTCH. The cursor is released: no motion, no clicks.
+    # Re-anchoring on every fist frame means accumulated fist motion is
+    # discarded: reopening the hand anywhere never jumps the cursor.
     if gframe.closed_fist:
         mouse.ensure_released()
         detector.set_dragging(False)
         state.reset_pinch()
         state.reset_scroll()
         state.pending_single_click = False
+        state.right_pinch_start = None
         state.prev_pinch = None
+        state.anchor_prev = gframe.motion_anchor
+        state.motion_resid = (0.0, 0.0)
         state.mode = Mode.SAFE
         return Mode.SAFE
 
@@ -263,57 +327,68 @@ def process_actions(
         detector.set_dragging(False)
         state.reset_pinch()
         state.pending_single_click = False
+        state.right_pinch_start = None
         state.prev_pinch = None
-        ax, ay = gframe.scroll_anchor_norm
-        if state.prev_cursor_norm is None:
-            state.prev_cursor_norm = (ax, ay)
+        ay = gframe.motion_anchor[1]
+        if state.scroll_prev_y is None:
+            state.scroll_prev_y = ay
         else:
-            dy = state.prev_cursor_norm[1] - ay  # positive when hand moves up
-            state.prev_cursor_norm = (ax, ay)
-            # Continuous accumulation: hand up = scroll up, down = down,
-            # speed-proportional like a real wheel.
-            state.scroll_accum += dy
-            ticks = int(state.scroll_accum / cfg.SCROLL_SPEED)
+            dy = state.scroll_prev_y - ay  # positive when hand moves up
+            state.scroll_prev_y = ay
+            state.scroll_accum += dy * _depth_gain(gframe)
+            ticks = int(state.scroll_accum / cfg.SCROLL_TICK_TRAVEL)
             if ticks != 0:
-                state.scroll_accum -= ticks * cfg.SCROLL_SPEED
+                state.scroll_accum -= ticks * cfg.SCROLL_TICK_TRAVEL
                 mouse.scroll(ticks)
                 state.last_action_time = now
+        state.scroll_gap = 0
+        # Re-anchor so leaving scroll never jumps the cursor.
+        state.anchor_prev = gframe.motion_anchor
+        state.motion_resid = (0.0, 0.0)
         state.mode = Mode.SCROLL
         return Mode.SCROLL
 
-    state.reset_scroll()
+    # Scroll pose momentarily lost: keep the anchor frozen for a few frames so
+    # pose flicker while the hand moves does not zero the scroll -- the gap
+    # motion still counts when the pose returns.
+    if state.scroll_prev_y is not None:
+        state.scroll_gap += 1
+        if state.scroll_gap > cfg.SCROLL_POSE_GRACE_FRAMES:
+            state.reset_scroll()
 
-    # --- Cursor move: pure RELATIVE ------------------------------------------
-    # Hand MOTION moves the cursor, never the hand's position in the camera
-    # frame. While a pinch is held the cursor freezes, so clicks land on a
-    # still target; releasing the pinch fires the click at that point.
-    cx, cy = gframe.cursor_norm
-    if pinch is None:
-        if state.prev_cursor_norm is not None:
-            dxn = cx - state.prev_cursor_norm[0]
-            dyn = cy - state.prev_cursor_norm[1]
-            if abs(dxn) > cfg.MOTION_JUMP or abs(dyn) > cfg.MOTION_JUMP:
-                # Implausible jump (tracking glitch / re-detection): re-anchor.
-                pass
-            elif abs(dxn) >= cfg.MOTION_DEADZONE or abs(dyn) >= cfg.MOTION_DEADZONE:
-                mouse.move_by(
-                    dxn * mouse.screen_w * cfg.RELATIVE_GAIN_X,
-                    dyn * mouse.screen_h * cfg.RELATIVE_GAIN_Y,
-                )
-        state.prev_cursor_norm = (cx, cy)
+    # --- Cursor motion: relative, from palm motion ---------------------------
+    # Applies in MOVE *and* while pinches are held (aiming a click): the
+    # cursor follows the hand until the pinch is released; release clicks.
+    _apply_relative_motion(gframe, state, mouse)
 
-    # --- Right click: thumb–middle pinch (optional, rising edge) ------------
+    # --- Right pinch: hold to aim; RELEASE fires the right click -------------
     if pinch == "middle":
-        mouse.ensure_released()
-        detector.set_dragging(False)
         state.reset_pinch()
         state.pending_single_click = False
-        if pinch_engaged and (now - state.last_action_time >= cfg.CLICK_COOLDOWN):
-            mouse.right_click()
-            state.last_action_time = now
+        if pinch_engaged:
+            mouse.ensure_released()
+            detector.set_dragging(False)
+            if state.right_pinch_start is None:
+                if now - state.last_action_time < cfg.PINCH_MIN_RELEASE_GAP:
+                    state.prev_pinch = pinch
+                    state.mode = Mode.MOVE
+                    return Mode.MOVE
+                state.right_pinch_start = now
         state.prev_pinch = pinch
         state.mode = Mode.RIGHT_CLICK
         return Mode.RIGHT_CLICK
+
+    if state.prev_pinch == "middle":
+        # Right pinch released -> right click now (not on engage).
+        if (
+            state.right_pinch_start is not None
+            and now - state.right_pinch_start >= cfg.PINCH_MIN_HOLD
+            and now - state.last_action_time >= cfg.CLICK_COOLDOWN
+        ):
+            mouse.right_click()
+            state.last_action_time = now
+        state.right_pinch_start = None
+        state.prev_pinch = None
 
     # --- Left pinch: click / double / drag ----------------------------------
     if pinch == "index":
@@ -334,18 +409,6 @@ def process_actions(
                 state.left_held_for_drag = True
                 detector.set_dragging(True)
                 state.last_action_time = now
-            # Dragging: hand motion moves the cursor with the button held.
-            if state.prev_cursor_norm is not None:
-                dxn = cx - state.prev_cursor_norm[0]
-                dyn = cy - state.prev_cursor_norm[1]
-                if abs(dxn) > cfg.MOTION_JUMP or abs(dyn) > cfg.MOTION_JUMP:
-                    pass
-                elif abs(dxn) >= cfg.MOTION_DEADZONE or abs(dyn) >= cfg.MOTION_DEADZONE:
-                    mouse.move_by(
-                        dxn * mouse.screen_w * cfg.RELATIVE_GAIN_X,
-                        dyn * mouse.screen_h * cfg.RELATIVE_GAIN_Y,
-                    )
-            state.prev_cursor_norm = (cx, cy)
             state.prev_pinch = pinch
             state.mode = Mode.DRAG
             return Mode.DRAG
@@ -354,15 +417,21 @@ def process_actions(
         state.mode = Mode.LEFT_CLICK
         return Mode.LEFT_CLICK
 
-    # --- Pinch released -----------------------------------------------------
+    # --- Left pinch released -------------------------------------------------
     if state.left_pinch_start is not None:
         was_drag = state.left_held_for_drag
+        held = now - state.left_pinch_start
         state.reset_pinch()
         detector.set_dragging(False)
         state.prev_pinch = None
 
         if was_drag:
             mouse.mouse_up()
+            state.mode = Mode.MOVE
+            return Mode.MOVE
+
+        if held < cfg.PINCH_MIN_HOLD:
+            # Too brief to be a deliberate click: tracking noise.
             state.mode = Mode.MOVE
             return Mode.MOVE
 
@@ -412,9 +481,11 @@ def main() -> None:
     )
     print("FAILSAFE: fling cursor to top-left corner to emergency-stop.")
     print(
-        "Gestures: Move=move hand (relative) | Clutch=fist | "
-        "L/Dbl/Drag=thumb+index (click on release) | "
-        "R=thumb+middle | Scroll=index+middle up + move"
+        "Gestures: hand motion = cursor (relative, palm-driven) | "
+        "fist = release/clutch | "
+        "pinch thumb+index = aim (cursor follows), release = left click, "
+        "hold = drag | pinch thumb+middle, release = right click | "
+        "index+middle up + move hand = scroll"
     )
 
     landmarker = create_landmarker()
@@ -424,7 +495,7 @@ def main() -> None:
     camera = cv2.VideoCapture(cfg.CAMERA_INDEX)
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.FRAME_WIDTH)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.FRAME_HEIGHT)
-    # Prefer MJPEG when available — often higher effective FPS on USB cams.
+    # Prefer MJPG when available -- often higher effective FPS on USB cams.
     try:
         camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -489,7 +560,7 @@ def main() -> None:
                 pinch_dict = state.last_pinch_dict
                 hand_size_v = state.last_hand_size
                 depth_scale_v = state.last_depth_scale
-                # Do not advance clicks/drags during grace — only hold cursor.
+                # Do not advance clicks/drags during grace -- only hold cursor.
                 if state.mode == Mode.SAFE:
                     mode = Mode.SAFE
                 else:
@@ -511,6 +582,7 @@ def main() -> None:
                 state.reset_pinch()
                 state.reset_scroll()
                 state.reset_tracking()
+                state.right_pinch_start = None
                 state.prev_pinch = None
                 state.mode = Mode.IDLE
 
