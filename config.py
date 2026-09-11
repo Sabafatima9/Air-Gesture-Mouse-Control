@@ -168,7 +168,7 @@ SHORTCUT_COOLDOWN = 0.35
 # Palm travel (fraction of frame height, depth-normalized) per wheel notch.
 # One Windows wheel notch scrolls ~3 lines by default.
 SCROLL_TICK_TRAVEL = 0.0045
-# Consecutive frames of V-sign required before scroll activates.
+# Consecutive frames of thumb-up pose required before scroll activates.
 SCROLL_CONFIRM_FRAMES = 3
 # Frames a broken pose is bridged once scroll is active (flicker immunity).
 SCROLL_EXIT_FRAMES = 4
