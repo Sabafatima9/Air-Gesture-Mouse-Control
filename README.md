@@ -1,191 +1,116 @@
 # Air Gesture Mouse Control
 
-Control your mouse with hand gestures from a **front-facing webcam** (laptop / selfie view).
-Built with **OpenCV** + **MediaPipe Hand Landmarker (Tasks API)** + **pyautogui**.
+Control your laptop **without touching it**. Built for the moments you are sitting a bit
+far from the screen -- leaning back, presenting, watching something -- and you do not want
+to reach for the trackpad just to move the cursor or click. One hand in front of the
+webcam is the mouse.
 
-Works on **Linux**, **macOS**, and **Windows**.
+## Stack
 
-**Windows:** double-click **`run.bat`** (uses the project venv, no activation needed).
+| Piece | Why |
+|-------|-----|
+| **Python 3.10+** | |
+| **OpenCV** | webcam capture, preview window, HUD |
+| **MediaPipe Hand Landmarker** (Tasks API) | on-device 21-point hand tracking |
+| **pyautogui** | cross-platform mouse moves, clicks, drags, scroll, hotkeys |
+| **NumPy** | landmark math |
 
-```bash
-pip install -r requirements.txt
-python main.py
-```
+- Everything runs **locally** -- no cloud, no video ever leaves the machine.
+- Cross-platform (Windows is the primary target; Linux and macOS work too).
+- The model file (~8 MB) auto-downloads on first run.
 
-Press **Q** or **Esc** in the camera window to quit.
-**Emergency stop:** fling the cursor into the extreme **top-left** corner (pyautogui FAILSAFE).
-
----
-
-## How gestures work
-
-Preview is **mirrored** so moving your hand left moves the cursor left.
-Fingers on the HUD are labeled **TIMRP** = Thumb, Index, Middle, Ring, Pinky (`-` = curled).
-
-### Cursor speed gears
-
-| Hand | Speed |
-|------|-------|
-| **Open hand** (all fingers up) | **Fast** — cross the screen |
-| **Pinky down** (4 fingers) | **Slow** |
-| **Pinky + ring down** (3 fingers) | **Precision** — extremely slow, for careful aiming |
-
-- The gear applies to cursor motion only — **dragging always runs at full speed** and **scrolling ignores gears**.
-- While you pinch to click, the fingers are down, so aiming is automatically slow.
-
-### Gestures
-
-| Gesture | Fingers / how | Mouse action |
-|--------|----------------|--------------|
-| **Move** | Move your hand in any direction | Cursor moves with the hand's *motion* (relative, like a real mouse) — position in the camera frame never matters |
-| **Clutch / release** | **Closed fist** | Releases the cursor: no motion, no clicks. Reopen anywhere and keep going — no jump |
-| **Left click** | Pinch **thumb + index**, aim (cursor **keeps following** your hand), **release** the pinch | Left click at the cursor's final position |
-| **Double click** | Two **quick** thumb+index pinches (within 0.3 s) | Double-click |
-| **Drag** | Pinch thumb+index, **hold ~0.9 s**, move; release to drop | Click-and-drag (deliberate hold, so a slow click is never a drag) |
-| **Right click** | Pinch **thumb + index + middle together** (or thumb+middle), aim, **release** | Right click — index touching the thumb is *fine*, that is the gesture |
-| **Shortcut** | Pinch **thumb + pinky**, aim, **release** | Fires the configurable combo (default **Ctrl+Win+Space**) — repeatable |
-| **Scroll** | **V-sign**: index+middle up, ring+pinky curled, **thumb tucked**, move hand up/down | Vertical scroll, speed-proportional, ~1.4x faster than before |
-| **Safe / rest** | **Closed fist** | No mouse action — rest without accidents |
-
-### How it stays stable
-
-- **Palm anchor** — cursor motion comes from the *palm centroid* (wrist + finger bases). Pinching or opening fingers barely moves it, so aiming a click never shakes the cursor.
-- **Velocity-adaptive smoothing** — heavy filtering when still (rock steady), light when moving (no rubber-band lag).
-- **Radial deadzone + decaying residue** — alternating hand tremor cancels out (a still hand = a still cursor); slow deliberate motion accumulates and still creeps forward.
-- **Tracking hold / grace** — brief hand loss keeps the last cursor instead of jumping; tracking glitches can never teleport the cursor.
-- **Scroll / fist confirm frames** — avoid single-frame false triggers; scroll bridges short pose flicker.
-- **HUD status**: `Cursor Active`, `LEFT CLICK`, `DOUBLE CLICK`, `DRAGGING`, `RIGHT CLICK`, `SHORTCUT`, `SCROLL`, `SAFE / NO ACTION`, `No Hand Detected`.
-
-Tune in `config.py`: `GEAR_*` (speed gears), `RELATIVE_GAIN_X/Y` (base speed), `MOTION_DEADZONE` (stillness), `PINCH_*` (click feel), `DRAG_HOLD_TIME`, `DOUBLE_CLICK_WINDOW`, `SCROLL_TICK_TRAVEL` (scroll speed), `SHORTCUT_KEYS` (the shortcut combo).
-
----
-## Install
-
-### 1. Python + venv
-
-Python **3.10 - 3.13** recommended. Always use a project venv -- do **not** install
-into the system Python:
+## Quick start
 
 ```bash
 py -m venv venv
 venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Linux/macOS:
+**Windows:** double-click **`run.bat`** (uses the venv, no activation needed).
+Others: `venv/bin/python main.py`.
 
+- **Q / Esc** quits. **Emergency stop:** fling the cursor into the top-left corner.
+- Preview is mirrored, so moving your hand left moves the cursor left.
+
+## Gestures
+
+| Gesture | How | Action |
+|---------|-----|--------|
+| **Move** | Move your open hand in any direction | Cursor moves with your hand's motion (relative, like a real mouse) -- its position in the camera frame never matters |
+| **Speed gear** | Open hand / pinky down / pinky+ring down | Fast / slow / precision cursor speed (see below) |
+| **Clutch** | Closed fist, thumb tucked | Cursor released: no motion, no clicks; reopen anywhere, no jump |
+| **Left click** | Pinch thumb+index, aim (cursor keeps following), **release** | Left click where you aimed |
+| **Double click** | Two quick thumb+index pinches | Double-click |
+| **Drag** | Pinch thumb+index, hold ~0.9 s, move, release | Click-and-drag (deliberate hold -- a slow click never drags) |
+| **Right click** | Pinch **thumb+index+middle** (or thumb+middle), release | Right click |
+| **Shortcut** | Pinch **thumb+pinky**, release | Fires a customizable combo (default **Ctrl+Win+Space**), repeatable |
+| **Scroll** | **Thumb up, all four fingers closed**, move hand up/down | Scroll up/down, speed-proportional (thumb out = scroll, thumb tucked = clutch) |
+
+### Cursor speed gears
+
+| Hand | Speed |
+|------|-------|
+| Open hand | Fast -- cross the screen |
+| Pinky down | Slow |
+| Pinky + ring down | Precision (extremely slow, for careful aiming) |
+
+Gears apply to cursor motion only: **dragging always runs at full speed** and **scrolling
+ignores gears**. Pinching to click automatically aims in a slow gear.
+
+## Features
+
+- **Relative motion control** -- reach any screen edge with the hand comfortably in frame; a closed fist is the clutch.
+- **Release-to-click** -- the cursor keeps following while you pinch (aiming), the release performs the click, so clicks land on a still target.
+- **Stable by design** -- palm-anchored tracking (pinching never shakes the cursor), velocity-adaptive smoothing, tremor-canceling deadzone: a still hand means a still cursor; tracking glitches can never teleport the cursor.
+- **Customizable shortcut** -- edit `SHORTCUT_KEYS` in `config.py` to any pyautogui key combo.
+- **On-screen HUD** -- live status (`LEFT CLICK`, `DRAGGING`, `SCROLL`, ...), finger states, pinch ratios, current gear, and a gesture legend.
+- **Offline test suite** -- `venv\Scripts\python tests\test_logic.py` verifies the whole gesture-to-mouse state machine without a camera.
+
+## Install details
+
+### Windows
+Usually works out of the box in the venv. Allow camera access if prompted.
+
+### Linux
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+sudo apt install python3-tk python3-dev python3-xlib
 ```
+X11 works directly; on Wayland mouse control may be restricted (try XWayland).
 
-### 2. Run
-
-Windows: double-click **`run.bat`**, or:
-
-```bash
-venv\Scripts\python main.py
-```
-
-Linux/macOS:
-
-```bash
-venv/bin/python main.py
-```
-
-### 3. Model file
-
-`hand_landmarker.task` (~8 MB) should already be in this folder.
-If it is missing, the app **downloads it automatically** on first run.
-(It is intentionally not stored in git.)
-
-### 4. OS-specific notes
-
-#### Linux
-
-```bash
-# Debian/Ubuntu examples -- names vary by distro
-sudo apt update
-sudo apt install python3-tk python3-dev
-# X11 helper (often needed under X11):
-sudo apt install python3-xlib
-```
-
-- **X11**: usually works after the packages above.
-- **Wayland**: mouse control can be restricted; try an XWayland session, or grant input permissions for your compositor.
-
-#### macOS
-
-1. **Camera**: System Settings -> Privacy & Security -> Camera -> allow Terminal / your IDE / Python.
-2. **Accessibility** (required for mouse control): Privacy & Security -> Accessibility -> enable the same app that runs `main.py`.
-3. If the cursor does not move, quit and relaunch the terminal after granting Accessibility.
-
-#### Windows
-
-- Usually works after `pip install -r requirements.txt` in the venv.
-- Allow camera access if Windows prompts you.
-
----
-
-## On-screen HUD
-
-- **Status**: Cursor Active / LEFT CLICK / RIGHT CLICK / DOUBLE CLICK / DRAGGING / SCROLL / SAFE / NO ACTION / No Hand Detected
-- **Fingers TIMRP** (debug): `T`=thumb ... `P`=pinky; `-` = curled
-- **Pinch ratios** (debug): thumb-index / thumb-middle
-- **White circle**: the palm anchor that drives the cursor
-- **Legend** (right side): gesture -> action cheat-sheet
-
----
+### macOS
+Grant **Camera** and **Accessibility** (mouse control) to your terminal/Python in
+System Settings -> Privacy & Security, then restart the terminal.
 
 ## Project layout
 
 | File | Role |
 |------|------|
-| `main.py` | Camera loop, HUD, action state machine (relative motion, clicks, scroll), tracking hold |
-| `gestures.py` | Palm anchor + filter, finger-up / pinch / fist / scroll-pose detection |
-| `mouse_controller.py` | Cross-platform mouse actions + adaptive smoothing (incl. Windows wheel-notch fix) |
-| `config.py` | Tunable constants |
+| `main.py` | Camera loop, HUD, action state machine |
+| `gestures.py` | Palm anchor, finger/pinch/fist/scroll-pose/gear detection |
+| `mouse_controller.py` | Mouse actions + smoothing (incl. Windows wheel-notch fix) |
+| `config.py` | All tunable constants (gains, gears, pinch feel, timings, shortcut keys) |
 | `hand.py` | Thin wrapper -> `main.main()` |
-| `tests/test_logic.py` | Offline tests of the whole gesture->mouse state machine (no camera needed) |
-| `run.bat` | Windows launcher using the venv |
-| `hand_landmarker.task` | MediaPipe model (auto-downloaded; not committed) |
-| `requirements.txt` | Python dependencies |
+| `tests/test_logic.py` | Offline tests of the gesture state machine |
+| `run.bat` | Windows launcher |
+| `hand_landmarker.task` | MediaPipe model (auto-downloaded, not committed) |
 | `prompt.md` | Living brief for agents working on this repo |
-
-Run the tests any time:
-
-```bash
-venv\Scripts\python tests\test_logic.py
-```
-
----
 
 ## Troubleshooting
 
-| Problem | What to try |
-|---------|-------------|
-| `ModuleNotFoundError` when running `python main.py` | You are using the system Python. Use `run.bat` or `venv\Scripts\python main.py`. |
-| Camera won't open | Change `CAMERA_INDEX` in `config.py` (try `1`). Close other apps using the webcam. |
-| Cursor doesn't move (macOS) | Grant **Accessibility** + Camera; restart the terminal. |
-| Cursor doesn't move (Linux Wayland) | Use X11/XWayland; install `python3-xlib`. |
-| Cursor too slow / fast | Tune `RELATIVE_GAIN_X` / `RELATIVE_GAIN_Y` in `config.py`. |
-| Cursor jittery | Raise `ANCHOR_ALPHA_SLOW` toward 0.3, or lower `ANCHOR_ALPHA_FAST`. |
-| Cursor laggy | Lower `ANCHOR_ALPHA_SLOW` / `ANCHOR_ALPHA_FAST`, or lower `SMOOTHING`. |
-| Fist not recognized as clutch | Curl index-pinky clearly; tweak `FINGER_UP_MARGIN` / `FIST_CONFIRM_FRAMES`. |
-| Scroll triggers while moving | Raise `SCROLL_CONFIRM_FRAMES` or keep pinky more curled. |
-| Scroll too slow / fast | Lower / raise `SCROLL_TICK_TRAVEL` (one notch ~ 3 lines on Windows default). |
-| Scroll lost while moving | Raise `SCROLL_POSE_GRACE_FRAMES` (tolerates pose flicker). |
-| Clicks too sensitive / not enough | Adjust `PINCH_ON_RATIO` / `PINCH_OFF_RATIO` in `config.py`. |
-| Drag drops too easily | Raise `DRAG_PINCH_OFF_RATIO`. |
-| Brief flicker loses cursor | Increase `TRACKING_HOLD_FRAMES` (e.g. `15`). |
-| Script dies suddenly | You hit **FAILSAFE** (cursor in top-left). Re-run; avoid slamming the cursor into that corner. |
-| Model missing | Check network; delete a corrupt `hand_landmarker.task` and re-run to re-download. |
-
----
+| Problem | Fix |
+|---------|-----|
+| `ModuleNotFoundError` | You are on the system Python. Use `run.bat` or `venv\Scripts\python main.py`. |
+| Camera won't open | Change `CAMERA_INDEX` (try `1`); close other apps using the webcam. |
+| Cursor too slow / fast | Tune `RELATIVE_GAIN_X` / `RELATIVE_GAIN_Y`. |
+| Cursor jittery / laggy | Raise `ANCHOR_ALPHA_SLOW` / lower `SMOOTHING` (and vice versa). |
+| Clicks too sensitive / miss | Adjust `PINCH_ON_RATIO` / `PINCH_OFF_RATIO`. |
+| Scroll too slow / fast | Lower / raise `SCROLL_TICK_TRAVEL` (one notch ~ 3 lines on Windows). |
+| Drag triggers by accident | Raise `DRAG_HOLD_TIME`. |
+| Scroll triggers by accident | Raise `SCROLL_CONFIRM_FRAMES`. |
+| Script dies suddenly | You hit the FAILSAFE (cursor in the top-left corner). Re-run. |
 
 ## Limitations
 
-- Designed for **one hand**, front camera (selfie-style). Mild angles are OK; extreme side views still struggle.
-- Lighting and busy backgrounds can reduce tracking quality.
-- Very fast gestures may be missed; pinches need a clear open -> close -> open.
-- A small set of **reliable** gestures is intentional -- middle-click was removed for simplicity.
+- One hand, front camera. Mild angles are fine; extreme side views struggle.
+- Poor lighting or busy backgrounds reduce tracking quality.
+- Deliberately a small set of reliable gestures instead of many fragile ones.
