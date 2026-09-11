@@ -1,4 +1,4 @@
-"""Tunable constants for Air Gesture Mouse Control."""
+﻿"""Tunable constants for Air Gesture Mouse Control."""
 
 from __future__ import annotations
 
@@ -58,19 +58,35 @@ FRAME_MARGIN = 0.06
 
 # --- Relative cursor control (palm motion) ---------------------------------
 # The cursor is driven by PALM MOTION only, like a real mouse: the hand's
-# position in the camera frame never matters, so every screen edge is
-# reachable while the hand stays comfortably in frame. A closed fist is the
-# clutch: it releases the cursor until the hand opens again.
-# Screen px per full-frame-width of palm travel.
-RELATIVE_GAIN_X = 1.6
-# Screen px per full-frame-height of palm travel.
-RELATIVE_GAIN_Y = 1.9
-# Palm motion (fraction of frame) below which the cursor holds still; smaller
-# leftovers accumulate as residue so slow precise aiming still works.
-MOTION_DEADZONE = 0.0025
+# position in the camera frame never matters. A closed fist is the clutch.
+# Screen px per full-frame-width of palm travel (at the FASTEST gear).
+RELATIVE_GAIN_X = 2.0
+# Screen px per full-frame-height of palm travel (at the FASTEST gear).
+RELATIVE_GAIN_Y = 2.4
+# Palm motion (fraction of frame) below which the cursor holds still. The
+# leftover is kept as residue so slow precise aiming still creeps forward,
+# while alternating tremor decays away -- a still hand = a still cursor.
+MOTION_DEADZONE = 0.003
+# How much of the unspent residue survives each frame (tremor cancellation).
+MOTION_RESIDUAL_DECAY = 0.85
 # Per-frame palm jump (fraction of frame) above this is a tracking glitch:
 # re-anchor and ignore it (never applied as cursor motion).
 MOTION_JUMP = 0.085
+
+# --- Speed gears (finger count) --------------------------------------------
+# The gear is picked from how many of index/middle/ring/pinky are extended:
+#   4 up (open hand)          -> GEAR_FULL   (fastest: cross the screen)
+#   3 up (pinky down)         -> GEAR_FOUR   (slow)
+#   2 up (pinky + ring down)  -> GEAR_THREE  (precision aiming)
+# The thumb is NOT counted (unreliable on front cameras). The gear applies to
+# cursor motion only: dragging always runs at full speed and scrolling is gear-
+# independent. While you pinch to click, the fingers are down, so aiming is
+# automatically in a slow gear.
+GEAR_FULL = 1.0
+GEAR_FOUR = 0.42
+GEAR_THREE = 0.16
+# EMA on the gear factor so finger flicker never makes the speed jump.
+GEAR_EMA = 0.35
 
 # Distance-invariant gain: palm deltas are scaled by reference/current hand
 # size, so leaning toward or away from the camera does not change cursor
@@ -83,8 +99,7 @@ HAND_SIZE_EMA = 0.25
 
 # --- Palm anchor filter (velocity-adaptive EMA) ----------------------------
 # Still hand -> ANCHOR_ALPHA_SLOW (jitter killed: steady cursor at rest);
-# moving hand -> ANCHOR_ALPHA_FAST (responsive: no rubber-band lag). This is
-# what keeps the cursor stable while aiming a click without adding lag.
+# moving hand -> ANCHOR_ALPHA_FAST (responsive: no rubber-band lag).
 ANCHOR_ALPHA_SLOW = 0.22
 ANCHOR_ALPHA_FAST = 0.75
 # Per-frame anchor speed (fraction of frame) counted as "fast".
@@ -119,30 +134,46 @@ TRACKING_HOLD_FRAMES = 10
 # ---------------------------------------------------------------------------
 PINCH_ON_RATIO = 0.34
 PINCH_OFF_RATIO = 0.50
-# While dragging, stay latched until pinch opens further (tolerance).
+# While dragging, stay latched until the pinch opens further (tolerance).
 DRAG_PINCH_OFF_RATIO = 0.62
+# Pinky (shortcut gesture) has its own pair: the pinky is shorter.
+PINKY_PINCH_ON_RATIO = 0.38
+PINKY_PINCH_OFF_RATIO = 0.54
 
 # ---------------------------------------------------------------------------
 # Click / drag timing (seconds)
 # ---------------------------------------------------------------------------
-CLICK_COOLDOWN = 0.30
-DRAG_HOLD_TIME = 0.48
-DOUBLE_CLICK_WINDOW = 0.42
-PINCH_MIN_RELEASE_GAP = 0.08
+CLICK_COOLDOWN = 0.25
+# Drag needs a DELIBERATE hold, so a slow left click is never mistaken for one.
+DRAG_HOLD_TIME = 0.85
+DOUBLE_CLICK_WINDOW = 0.30
+PINCH_MIN_RELEASE_GAP = 0.06
 # A pinch shorter than this is tracking noise, not a click gesture.
 PINCH_MIN_HOLD = 0.05
 
 # ---------------------------------------------------------------------------
-# Scroll gesture (continuous, speed-proportional -- like a real wheel)
+# Shortcut gesture: pinch thumb + pinky, RELEASE to fire the combo
+# ---------------------------------------------------------------------------
+# Any pyautogui key names work ("winleft" = the Windows key). Edit this tuple
+# to customize the shortcut.
+SHORTCUT_KEYS = ("ctrl", "winleft", "space")
+SHORTCUT_COOLDOWN = 0.35
+
+# ---------------------------------------------------------------------------
+# Scroll gesture: strict V-sign -- index+middle up, ring+pinky curled, THUMB
+# TUCKED away from the pinky. Strict on purpose: "pinky down" and "pinky+ring
+# down" are the cursor speed gears, so only the tucked thumb separates the
+# scroll pose from the precision gears.
 # ---------------------------------------------------------------------------
 # Palm travel (fraction of frame height, depth-normalized) per wheel notch.
 # One Windows wheel notch scrolls ~3 lines by default.
-SCROLL_TICK_TRAVEL = 0.0065
-# Consecutive frames of scroll pose required before scroll activates.
-SCROLL_CONFIRM_FRAMES = 2
-# Frames a broken scroll pose is remembered: pose flicker while the hand
-# moves must not zero the scroll -- the gap motion still counts when the
-# pose returns.
+SCROLL_TICK_TRAVEL = 0.0045
+# Consecutive frames of V-sign required before scroll activates.
+SCROLL_CONFIRM_FRAMES = 3
+# Frames a broken pose is bridged once scroll is active (flicker immunity).
+SCROLL_EXIT_FRAMES = 4
+# Frames the scroll anchor survives after the pose is gone (gap motion still
+# counts when the pose returns; after this it re-anchors fresh).
 SCROLL_POSE_GRACE_FRAMES = 12
 # Windows wheel detents per notch (pyautogui sends raw detents on win32).
 WHEEL_DELTA = 120
@@ -165,7 +196,7 @@ THUMB_EXTENDED_MARGIN = 0.09
 WINDOW_NAME = "Air Gesture Mouse - Q / Esc to quit"
 STATUS_PRINT_INTERVAL = 1.0
 SHOW_GESTURE_LEGEND = True
-# Compact debug lines (TIMRP / pinch ratios). Keep True for tuning.
+# Compact debug lines (TIMRP / pinch ratios / gear). Keep True for tuning.
 SHOW_DEBUG_HUD = True
 
 # pyautogui

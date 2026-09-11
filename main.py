@@ -8,6 +8,7 @@ Press Q or Esc to quit.
 
 from __future__ import annotations
 
+import math
 import time
 import urllib.request
 from typing import Optional, Tuple
@@ -46,7 +47,7 @@ def create_landmarker():
 
 
 class ActionState:
-    """Anchor motion, pinch timing for clicks/drags, and scroll state."""
+    """Anchor motion, pinch timing for clicks/drags/shortcut, and scroll state."""
 
     def __init__(self) -> None:
         self.mode = Mode.IDLE
@@ -59,6 +60,9 @@ class ActionState:
         self.pending_click_time = 0.0
         # Right click (fires on pinch RELEASE, exactly like the left click)
         self.right_pinch_start: Optional[float] = None
+        # Shortcut combo (fires on pinch RELEASE)
+        self.shortcut_pinch_start: Optional[float] = None
+        self.last_shortcut_time = 0.0
         self.last_action_time = 0.0
         # Scroll: its own anchor + accumulator so it never disturbs the cursor
         self.scroll_prev_y: Optional[float] = None
@@ -73,8 +77,9 @@ class ActionState:
         self.hold_frames_left = 0
         self.last_hand_size = 0.0
         self.last_depth_scale = 1.0
+        self.last_gear = 1.0
         self.last_fingers_label = "-----"
-        self.last_pinch_dict = {"idx": 1.0, "mid": 1.0}
+        self.last_pinch_dict = {"idx": 1.0, "mid": 1.0, "pky": 1.0}
 
     def reset_pinch(self) -> None:
         self.left_pinch_start = None
@@ -90,17 +95,29 @@ class ActionState:
         self.motion_resid = (0.0, 0.0)
 
 
+def _shortcut_label() -> str:
+    names = {"winleft": "Win", "winright": "Win", "ctrl": "Ctrl", "alt": "Alt",
+             "shift": "Shift", "space": "Space"}
+    return "+".join(names.get(k, k.capitalize()) for k in cfg.SHORTCUT_KEYS)
+
+
 # Short on-screen legend (simplified gesture -> mouse action).
 _LEGEND_LINES = [
-    "Move: move your hand (relative)",
+    "Move: hand motion (relative)",
+    "Speed gear: 5 fingers fast,",
+    "   4 (pinky down) slow,",
+    "   3 (pinky+ring down) precision",
     "Clutch: closed fist = release",
     "L-click: pinch thumb+index,",
     "   cursor follows, release = click",
     "Dbl: two quick pinches",
-    "Drag: pinch, hold 0.5s, move",
-    "R-click: pinch thumb+middle,",
-    "   cursor follows, release = click",
-    "Scroll: index+middle up, move",
+    "Drag: pinch, hold ~0.9s, move",
+    "R-click: pinch thumb+index+middle",
+    "   (or thumb+middle), release = click",
+    "Shortcut: pinch thumb+pinky,",
+    f"   release = {_shortcut_label()}",
+    "Scroll: V-sign (thumb tucked),",
+    "   move hand up/down",
 ]
 
 
@@ -118,6 +135,7 @@ def _mode_label(mode: Mode, hand_found: bool, holding: bool) -> str:
         Mode.DOUBLE_CLICK: "DOUBLE CLICK",
         Mode.DRAG: "DRAGGING",
         Mode.SCROLL: "SCROLL",
+        Mode.SHORTCUT: "SHORTCUT",
         Mode.SAFE: "SAFE / NO ACTION",
     }.get(mode, mode.name.replace("_", " "))
 
@@ -130,6 +148,7 @@ def _draw_hud(
     hand_found: bool,
     hand_size: float = 0.0,
     depth_scale: float = 1.0,
+    gear: float = 1.0,
     holding: bool = False,
 ) -> None:
     h, w = frame.shape[:2]
@@ -146,6 +165,7 @@ def _draw_hud(
         Mode.DOUBLE_CLICK: (255, 255, 80),
         Mode.DRAG: (255, 80, 200),
         Mode.SCROLL: (200, 255, 80),
+        Mode.SHORTCUT: (255, 180, 60),
         Mode.SAFE: (160, 160, 255),
     }.get(mode, (200, 200, 200))
     if holding:
@@ -169,21 +189,21 @@ def _draw_hud(
             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA,
         )
         pinch_txt = (
-            f"Pinch  idx={pinches.get('idx', 1):.2f}  "
-            f"mid={pinches.get('mid', 1):.2f}"
+            f"Pinch idx={pinches.get('idx', 1):.2f} "
+            f"mid={pinches.get('mid', 1):.2f} pky={pinches.get('pky', 1):.2f}"
         )
         cv2.putText(
             frame, pinch_txt, (12, 76),
             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 255, 180), 1, cv2.LINE_AA,
         )
-        depth_txt = f"HandSize={hand_size:.3f}  DepthScale={depth_scale:.2f}"
+        depth_txt = f"Gear={gear:.2f}  HandSize={hand_size:.3f}  Depth={depth_scale:.2f}"
         cv2.putText(
             frame, depth_txt, (12, 98),
             cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 200, 255), 1, cv2.LINE_AA,
         )
 
     if cfg.SHOW_GESTURE_LEGEND:
-        legend_x = w - 230
+        legend_x = w - 235
         legend_y0 = top_h + 16
         box_h = 18 * len(_LEGEND_LINES) + 12
         overlay2 = frame.copy()
@@ -241,10 +261,12 @@ def _draw_landmarks(frame, landmarks, active_pinch: Optional[str]) -> None:
     cv2.line(frame, px(cfg.WRIST), px(cfg.MIDDLE_MCP), (100, 180, 255), 2, cv2.LINE_AA)
     cv2.circle(frame, px(cfg.WRIST), 5, (100, 180, 255), -1, cv2.LINE_AA)
 
-    if active_pinch == "index":
+    if active_pinch in ("index", "index_middle"):
         cv2.line(frame, px(cfg.THUMB_TIP), px(cfg.INDEX_TIP), (0, 255, 0), 2)
-    elif active_pinch == "middle":
+    if active_pinch in ("middle", "index_middle"):
         cv2.line(frame, px(cfg.THUMB_TIP), px(cfg.MIDDLE_TIP), (0, 80, 255), 2)
+    if active_pinch == "pinky":
+        cv2.line(frame, px(cfg.THUMB_TIP), px(cfg.PINKY_TIP), (255, 255, 80), 2)
 
     m = cfg.FRAME_MARGIN
     x0, y0 = int(m * w), int(m * h)
@@ -263,10 +285,12 @@ def _apply_relative_motion(gframe, state: ActionState, mouse: MouseController) -
 
     Runs on every non-fist, non-scroll frame -- including while a pinch is
     held, so the cursor keeps following the hand while aiming a click; the
-    pinch RELEASE is what clicks. Sub-deadzone motion is accumulated as
-    residue (slow precise aiming still moves; alternating jitter cancels).
-    The anchor is re-set every frame, so fist exits, scroll exits and
-    tracking glitches never jump the cursor.
+    pinch RELEASE is what clicks. Speed gears from the finger count scale the
+    move (full speed while dragging). Motion below the deadzone is kept as
+    decaying residue: deliberate slow motion accumulates until it crosses the
+    deadzone (slow precise aiming creeps), alternating tremor decays away (a
+    still hand keeps the cursor perfectly still). The anchor is re-set every
+    frame, so fist exits, scroll exits and tracking glitches never jump it.
     """
     ax, ay = gframe.motion_anchor
     if state.anchor_prev is None:
@@ -276,22 +300,28 @@ def _apply_relative_motion(gframe, state: ActionState, mouse: MouseController) -
     rx, ry = state.motion_resid
     dxn = ax - state.anchor_prev[0] + rx
     dyn = ay - state.anchor_prev[1] + ry
-    state.motion_resid = (0.0, 0.0)
+    state.anchor_prev = (ax, ay)
     if abs(dxn) > cfg.MOTION_JUMP or abs(dyn) > cfg.MOTION_JUMP:
         # Tracking glitch: drop the delta; never carried as residue either.
-        state.anchor_prev = (ax, ay)
+        state.motion_resid = (0.0, 0.0)
         return
-    if abs(dxn) < cfg.MOTION_DEADZONE and abs(dyn) < cfg.MOTION_DEADZONE:
-        # Below the deadzone: remember it, do not move yet.
-        state.motion_resid = (dxn, dyn)
-        state.anchor_prev = (ax, ay)
+    d = math.hypot(dxn, dyn)
+    if d < cfg.MOTION_DEADZONE:
+        # Below the deadzone: hold as decaying residue.
+        state.motion_resid = (
+            dxn * cfg.MOTION_RESIDUAL_DECAY,
+            dyn * cfg.MOTION_RESIDUAL_DECAY,
+        )
         return
+    # Drags always run at full speed; otherwise the finger-count gear applies.
+    factor = 1.0 if state.left_held_for_drag else gframe.gear
     gain = _depth_gain(gframe)
+    shave = cfg.MOTION_DEADZONE / d
     mouse.move_by(
-        dxn * gain * mouse.screen_w * cfg.RELATIVE_GAIN_X,
-        dyn * gain * mouse.screen_h * cfg.RELATIVE_GAIN_Y,
+        dxn * (1.0 - shave) * factor * gain * mouse.screen_w * cfg.RELATIVE_GAIN_X,
+        dyn * (1.0 - shave) * factor * gain * mouse.screen_h * cfg.RELATIVE_GAIN_Y,
     )
-    state.anchor_prev = (ax, ay)
+    state.motion_resid = (0.0, 0.0)
 
 
 def process_actions(
@@ -312,6 +342,7 @@ def process_actions(
         state.reset_scroll()
         state.pending_single_click = False
         state.right_pinch_start = None
+        state.shortcut_pinch_start = None
         state.prev_pinch = None
         state.anchor_prev = gframe.motion_anchor
         state.motion_resid = (0.0, 0.0)
@@ -328,6 +359,7 @@ def process_actions(
         state.reset_pinch()
         state.pending_single_click = False
         state.right_pinch_start = None
+        state.shortcut_pinch_start = None
         state.prev_pinch = None
         ay = gframe.motion_anchor[1]
         if state.scroll_prev_y is None:
@@ -335,6 +367,7 @@ def process_actions(
         else:
             dy = state.scroll_prev_y - ay  # positive when hand moves up
             state.scroll_prev_y = ay
+            # Scroll speed is gear-INDEPENDENT by design.
             state.scroll_accum += dy * _depth_gain(gframe)
             ticks = int(state.scroll_accum / cfg.SCROLL_TICK_TRAVEL)
             if ticks != 0:
@@ -356,13 +389,15 @@ def process_actions(
         if state.scroll_gap > cfg.SCROLL_POSE_GRACE_FRAMES:
             state.reset_scroll()
 
-    # --- Cursor motion: relative, from palm motion ---------------------------
+    # --- Cursor motion: relative, from palm motion, speed-geared -------------
     # Applies in MOVE *and* while pinches are held (aiming a click): the
     # cursor follows the hand until the pinch is released; release clicks.
     _apply_relative_motion(gframe, state, mouse)
 
     # --- Right pinch: hold to aim; RELEASE fires the right click -------------
-    if pinch == "middle":
+    # "index_middle" = thumb against index AND middle (the EASY right click);
+    # "middle" = thumb against middle only. Neither ever becomes a drag.
+    if pinch in ("index_middle", "middle"):
         state.reset_pinch()
         state.pending_single_click = False
         if pinch_engaged:
@@ -378,7 +413,7 @@ def process_actions(
         state.mode = Mode.RIGHT_CLICK
         return Mode.RIGHT_CLICK
 
-    if state.prev_pinch == "middle":
+    if state.prev_pinch in ("index_middle", "middle"):
         # Right pinch released -> right click now (not on engage).
         if (
             state.right_pinch_start is not None
@@ -388,6 +423,37 @@ def process_actions(
             mouse.right_click()
             state.last_action_time = now
         state.right_pinch_start = None
+        state.prev_pinch = None
+
+    # --- Pinky pinch: hold to aim; RELEASE fires the shortcut combo ----------
+    if pinch == "pinky":
+        state.reset_pinch()
+        state.pending_single_click = False
+        state.right_pinch_start = None
+        if pinch_engaged:
+            mouse.ensure_released()
+            detector.set_dragging(False)
+            if state.shortcut_pinch_start is None:
+                if now - state.last_action_time < cfg.PINCH_MIN_RELEASE_GAP:
+                    state.prev_pinch = pinch
+                    state.mode = Mode.MOVE
+                    return Mode.MOVE
+                state.shortcut_pinch_start = now
+        state.prev_pinch = pinch
+        state.mode = Mode.SHORTCUT
+        return Mode.SHORTCUT
+
+    if state.prev_pinch == "pinky":
+        # Pinky pinch released -> fire the shortcut combo (repeatable).
+        if (
+            state.shortcut_pinch_start is not None
+            and now - state.shortcut_pinch_start >= cfg.PINCH_MIN_HOLD
+            and now - state.last_shortcut_time >= cfg.SHORTCUT_COOLDOWN
+        ):
+            mouse.shortcut()
+            state.last_shortcut_time = now
+            state.last_action_time = now
+        state.shortcut_pinch_start = None
         state.prev_pinch = None
 
     # --- Left pinch: click / double / drag ----------------------------------
@@ -481,11 +547,12 @@ def main() -> None:
     )
     print("FAILSAFE: fling cursor to top-left corner to emergency-stop.")
     print(
-        "Gestures: hand motion = cursor (relative, palm-driven) | "
-        "fist = release/clutch | "
-        "pinch thumb+index = aim (cursor follows), release = left click, "
-        "hold = drag | pinch thumb+middle, release = right click | "
-        "index+middle up + move hand = scroll"
+        "Gestures: hand motion = cursor (relative; 5 fingers fast, pinky down\n"
+        "  slow, pinky+ring down precision) | fist = release/clutch | pinch\n"
+        "  thumb+index = aim (cursor follows), release = left click, hold =\n"
+        "  drag | pinch thumb+index+middle (or thumb+middle), release = right\n"
+        f"  click | pinch thumb+pinky, release = {_shortcut_label()} shortcut\n"
+        "  V-sign (thumb tucked) + move hand = scroll"
     )
 
     landmarker = create_landmarker()
@@ -532,9 +599,10 @@ def main() -> None:
 
             hand_found = bool(result and result.hand_landmarks)
             fingers_label = "-----"
-            pinch_dict = {"idx": 1.0, "mid": 1.0}
+            pinch_dict = {"idx": 1.0, "mid": 1.0, "pky": 1.0}
             hand_size_v = 0.0
             depth_scale_v = 1.0
+            gear_v = 1.0
             mode = Mode.IDLE
             holding = False
             now = time.time()
@@ -546,8 +614,10 @@ def main() -> None:
                 pinch_dict = gframe.pinches.as_dict()
                 hand_size_v = gframe.hand_size
                 depth_scale_v = gframe.depth_scale
+                gear_v = gframe.gear
                 state.last_hand_size = hand_size_v
                 state.last_depth_scale = depth_scale_v
+                state.last_gear = gear_v
                 state.last_fingers_label = fingers_label
                 state.last_pinch_dict = pinch_dict
                 state.hold_frames_left = cfg.TRACKING_HOLD_FRAMES
@@ -560,6 +630,7 @@ def main() -> None:
                 pinch_dict = state.last_pinch_dict
                 hand_size_v = state.last_hand_size
                 depth_scale_v = state.last_depth_scale
+                gear_v = state.last_gear
                 # Do not advance clicks/drags during grace -- only hold cursor.
                 if state.mode == Mode.SAFE:
                     mode = Mode.SAFE
@@ -583,6 +654,7 @@ def main() -> None:
                 state.reset_scroll()
                 state.reset_tracking()
                 state.right_pinch_start = None
+                state.shortcut_pinch_start = None
                 state.prev_pinch = None
                 state.mode = Mode.IDLE
 
@@ -594,6 +666,7 @@ def main() -> None:
                 hand_found,
                 hand_size=hand_size_v,
                 depth_scale=depth_scale_v,
+                gear=gear_v,
                 holding=holding,
             )
 

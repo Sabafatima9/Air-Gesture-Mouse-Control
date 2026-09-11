@@ -1,4 +1,4 @@
-﻿# Air Gesture Mouse Control -- agent prompt
+# Air Gesture Mouse Control -- agent prompt
 
 Living brief for assistants working on this repo. Keep this file accurate when the code changes.
 
@@ -14,18 +14,22 @@ Cross-platform **hand-gesture mouse** for a **front-facing webcam** (selfie view
 ## Interaction model (do not regress these)
 
 - **Relative motion only.** The cursor is driven by PALM MOTION (centroid of wrist + the four MCPs), never by hand position in the camera frame and never by a fingertip (pinching moves fingertips and would shake the cursor). Hand position in frame is irrelevant; any screen edge is reachable with the hand in frame.
+- **Speed gears (finger count):** open hand = fast, pinky down = slow, pinky+ring down = precision (`GEAR_FULL/FOUR/THREE`, EMA-smoothed). The thumb is NOT counted (unreliable on front cameras). Gears apply to cursor motion only: dragging runs at full speed and scrolling is gear-independent. Pinching auto-slows aiming (fingers are down).
+- **Stability:** velocity-adaptive anchor filter + radial deadzone + decaying sub-deadzone residue. Still hand (alternating tremor) = cursor does not move; slow deliberate motion accumulates and creeps. Glitches (`MOTION_JUMP`/`ANCHOR_SNAP`) never move the cursor.
 - **Closed fist = clutch.** No motion, no clicks; re-anchor every fist frame so reopening anywhere never jumps the cursor.
-- **Pinch thumb+index:** cursor keeps following the hand while the pinch is held (aiming); the RELEASE performs the left click at the cursor's final position. Two quick pinches = double click. Hold >= DRAG_HOLD_TIME then move = drag (mouse_down, follow, release to mouse_up).
-- **Pinch thumb+middle:** same pattern -- aim while held, RELEASE performs the right click. It must NOT fire on engage.
-- **Scroll pose** (index+middle up, pinky curled, ring ignored): vertical scroll driven by PALM y motion, speed-proportional like a real wheel. Survives pose flicker via SCROLL_POSE_GRACE_FRAMES (anchor frozen across short gaps, gap motion still counts; full reset only after the grace expires).
-- **Priority:** closed fist > confirmed scroll pose > pinches; among pinches index > middle (exclusive).
-
+- **Pinch classes (latched at ENGAGE, action on RELEASE):**
+  - `index` (thumb+index): cursor follows while held (aiming); RELEASE = left click. Two quick pinches (< `DOUBLE_CLICK_WINDOW` ~0.30 s) = double click. Hold >= `DRAG_HOLD_TIME` (~0.85 s) then move = drag (mouseDown, follow at FULL speed, release = mouseUp). A 0.6 s hold is a click, NOT a drag.
+  - `index_middle` (thumb against index AND middle) or `middle` (thumb+middle): RELEASE = right click. NEVER drags, however long it is held. The combined pinch is the intended (easy) right click: the index touching the thumb is the gesture, not an error.
+  - `pinky` (thumb+pinky): RELEASE fires `SHORTCUT_KEYS` (default Ctrl+Win+Space) via `pyautogui.hotkey`, repeatable after `SHORTCUT_COOLDOWN`.
+- **Scroll pose (strict V-sign):** index+middle up, ring+pinky curled, thumb TUCKED away from the pinky. Strict ON PURPOSE: "pinky down" and "pinky+ring down" are the speed gears, so only the tucked thumb separates scroll from the precision gears, and pinky-touching-thumb is the shortcut. Confirm `SCROLL_CONFIRM_FRAMES` to engage; sticky for `SCROLL_EXIT_FRAMES` when broken; palm-anchor driven; `SCROLL_TICK_TRAVEL` per notch; gear-independent.
+- **Priority:** closed fist > confirmed scroll pose > pinches. Pinch classification is latched at engage until the hand clearly opens.
+- **Windows scroll quirk:** pyautogui sends raw wheel detents on win32 (120 per notch) -- `MouseController.scroll` multiplies by `WHEEL_DELTA` there.
 ## Tracking design (keep when editing)
 
 - `gestures.py`: `AnchorFilter` = velocity-adaptive EMA on the palm anchor (calm when still, loose when moving; snaps on > ANCHOR_SNAP glitches). Hand size is EMA'd for distance-invariant gain (REFERENCE_HAND_SIZE / size, clamped).
 - `main.py`: `_apply_relative_motion` computes per-frame palm deltas: MOTION_JUMP guard drops tracking glitches; sub-MOTION_DEADZONE motion accumulates as residue so slow aiming works and jitter cancels. Called on every non-fist, non-scroll frame, including while pinches are held.
 - Scroll has its OWN anchor (`scroll_prev_y` + accumulator) -- never shared with cursor motion, so entering/leaving scroll cannot jump the cursor.
-- `mouse_controller.py`: velocity-adaptive screen-space smoothing + residual pixel deadzone. **Windows scroll quirk:** pyautogui passes raw wheel detents (WHEEL_DELTA = 120 per notch), so `scroll()` multiplies notches by 120 on win32. Do not remove this or scroll silently dies on Windows.
+- `mouse_controller.py`: velocity-adaptive screen-space smoothing (sub-pixel moves skipped; slow aiming is handled by the normalized-space residue in main.py). shortcut() sends SHORTCUT_KEYS via hotkey. **Windows scroll quirk:** pyautogui passes raw wheel detents (WHEEL_DELTA = 120 per notch), so `scroll()` multiplies notches by 120 on win32. Do not remove this or scroll silently dies on Windows.
 - Pinch hysteresis: on < PINCH_ON_RATIO, off > PINCH_OFF_RATIO (wider while dragging); re-arm requires all ratios open after fist/scroll suppress pinches.
 - Temporal confirm: SCROLL_CONFIRM_FRAMES / FIST_CONFIRM_FRAMES; PINCH_MIN_HOLD filters sub-50 ms noise pinches; CLICK_COOLDOWN spaces actions.
 - VIDEO timestamps use real elapsed ms (not a fixed fake FPS). TRACKING_HOLD_FRAMES (~10) holds the cursor during brief hand loss.

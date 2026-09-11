@@ -1,4 +1,4 @@
-﻿# Air Gesture Mouse Control
+# Air Gesture Mouse Control
 
 Control your mouse with hand gestures from a **front-facing webcam** (laptop / selfie view).
 Built with **OpenCV** + **MediaPipe Hand Landmarker (Tasks API)** + **pyautogui**.
@@ -22,38 +22,43 @@ Press **Q** or **Esc** in the camera window to quit.
 Preview is **mirrored** so moving your hand left moves the cursor left.
 Fingers on the HUD are labeled **TIMRP** = Thumb, Index, Middle, Ring, Pinky (`-` = curled).
 
+### Cursor speed gears
+
+| Hand | Speed |
+|------|-------|
+| **Open hand** (all fingers up) | **Fast** — cross the screen |
+| **Pinky down** (4 fingers) | **Slow** |
+| **Pinky + ring down** (3 fingers) | **Precision** — extremely slow, for careful aiming |
+
+- The gear applies to cursor motion only — **dragging always runs at full speed** and **scrolling ignores gears**.
+- While you pinch to click, the fingers are down, so aiming is automatically slow.
+
+### Gestures
+
 | Gesture | Fingers / how | Mouse action |
 |--------|----------------|--------------|
-| **Move** | Open hand; **move your hand** in any direction | Cursor moves with the hand's *motion* (relative, like a real mouse) -- position in the camera frame never matters |
-| **Clutch / release** | **Closed fist** | Releases the cursor: no motion, no clicks. Reopen anywhere and keep going -- no jump |
+| **Move** | Move your hand in any direction | Cursor moves with the hand's *motion* (relative, like a real mouse) — position in the camera frame never matters |
+| **Clutch / release** | **Closed fist** | Releases the cursor: no motion, no clicks. Reopen anywhere and keep going — no jump |
 | **Left click** | Pinch **thumb + index**, aim (cursor **keeps following** your hand), **release** the pinch | Left click at the cursor's final position |
-| **Double click** | Two quick **thumb + index** pinches | Double-click |
-| **Drag** | Pinch **thumb + index**, **hold** ~0.5s, move; release to drop | Click-and-drag |
-| **Right click** | Pinch **thumb + middle**, aim, **release** the pinch | Right click at the cursor's final position |
-| **Scroll** | **Index + middle** up (ring ignored), move hand **up/down** | Vertical scroll, speed-proportional, like a real wheel |
-| **Safe / rest** | **Closed fist** | No mouse action -- rest without accidents |
+| **Double click** | Two **quick** thumb+index pinches (within 0.3 s) | Double-click |
+| **Drag** | Pinch thumb+index, **hold ~0.9 s**, move; release to drop | Click-and-drag (deliberate hold, so a slow click is never a drag) |
+| **Right click** | Pinch **thumb + index + middle together** (or thumb+middle), aim, **release** | Right click — index touching the thumb is *fine*, that is the gesture |
+| **Shortcut** | Pinch **thumb + pinky**, aim, **release** | Fires the configurable combo (default **Ctrl+Win+Space**) — repeatable |
+| **Scroll** | **V-sign**: index+middle up, ring+pinky curled, **thumb tucked**, move hand up/down | Vertical scroll, speed-proportional, ~1.4x faster than before |
+| **Safe / rest** | **Closed fist** | No mouse action — rest without accidents |
 
 ### How it stays stable
 
-- **Palm anchor** -- cursor motion comes from the *palm centroid* (wrist + finger MCPs),
-  never a fingertip, so opening/closing fingers cannot shake the cursor while you aim.
-- **Velocity-adaptive anchor filter** -- strong smoothing when the hand is still
-  (rock-steady cursor), light smoothing when it moves (responsive, not laggy).
-- **Distance-normalized gain** -- leaning toward/away from the camera does not change cursor speed.
-- **Residual deadzone** -- sub-threshold motion accumulates (slow precise aiming works);
-  alternating jitter cancels itself out.
-- **Glitch guard** -- implausible per-frame jumps (tracking glitches) are dropped, never applied.
-- Pinch distances are normalized by hand size; drag uses a wider pinch-off tolerance.
+- **Palm anchor** — cursor motion comes from the *palm centroid* (wrist + finger bases). Pinching or opening fingers barely moves it, so aiming a click never shakes the cursor.
+- **Velocity-adaptive smoothing** — heavy filtering when still (rock steady), light when moving (no rubber-band lag).
+- **Radial deadzone + decaying residue** — alternating hand tremor cancels out (a still hand = a still cursor); slow deliberate motion accumulates and still creeps forward.
+- **Tracking hold / grace** — brief hand loss keeps the last cursor instead of jumping; tracking glitches can never teleport the cursor.
+- **Scroll / fist confirm frames** — avoid single-frame false triggers; scroll bridges short pose flicker.
+- **HUD status**: `Cursor Active`, `LEFT CLICK`, `DOUBLE CLICK`, `DRAGGING`, `RIGHT CLICK`, `SHORTCUT`, `SCROLL`, `SAFE / NO ACTION`, `No Hand Detected`.
 
-### Priority (reliability first)
-
-1. **Closed fist** -> clutch / NO ACTION (no move, click, drag, or scroll).
-2. **Scroll pose** (confirmed over a few frames) -> scroll; suppresses pinches.
-3. **Thumb + index** -> left click / double / drag (by timing).
-4. **Thumb + middle** -> right click (index pinch preferred if both close).
+Tune in `config.py`: `GEAR_*` (speed gears), `RELATIVE_GAIN_X/Y` (base speed), `MOTION_DEADZONE` (stillness), `PINCH_*` (click feel), `DRAG_HOLD_TIME`, `DOUBLE_CLICK_WINDOW`, `SCROLL_TICK_TRAVEL` (scroll speed), `SHORTCUT_KEYS` (the shortcut combo).
 
 ---
-
 ## Install
 
 ### 1. Python + venv

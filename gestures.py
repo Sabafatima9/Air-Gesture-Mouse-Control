@@ -1,10 +1,10 @@
-"""Finger-up, pinch, fist, and scroll-state detection from MediaPipe landmarks."""
+﻿"""Finger-up, pinch, fist, scroll-state and speed-gear detection from landmarks."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -21,6 +21,7 @@ class Mode(Enum):
     DOUBLE_CLICK = auto()
     DRAG = auto()
     SCROLL = auto()
+    SHORTCUT = auto()
     SAFE = auto()
 
 
@@ -52,11 +53,13 @@ class FingerState:
 class PinchRatios:
     index: float = 1.0
     middle: float = 1.0
+    pinky: float = 1.0
 
     def as_dict(self) -> dict:
         return {
             "idx": self.index,
             "mid": self.middle,
+            "pky": self.pinky,
         }
 
 
@@ -73,9 +76,12 @@ class GestureFrame:
     depth_scale: float = 1.0
     # Filtered palm centroid -- THE cursor motion anchor.
     motion_anchor: Tuple[float, float] = (0.5, 0.5)
+    # Cursor speed gear (EMA-smoothed finger count).
+    gear: float = 1.0
     scroll_pose: bool = False
     closed_fist: bool = False
-    # "index" | "middle" | None
+    # "index" (left) | "index_middle" (right) | "middle" (right)
+    # | "pinky" (shortcut) | None
     active_pinch: Optional[str] = None
 
 
@@ -184,14 +190,26 @@ def pinch_ratios(landmarks: Sequence, size: float) -> PinchRatios:
     return PinchRatios(
         index=float(np.linalg.norm(thumb - _lm_xy(landmarks, cfg.INDEX_TIP)) / size),
         middle=float(np.linalg.norm(thumb - _lm_xy(landmarks, cfg.MIDDLE_TIP)) / size),
+        pinky=float(np.linalg.norm(thumb - _lm_xy(landmarks, cfg.PINKY_TIP)) / size),
     )
 
 
-def is_scroll_pose(fingers: FingerState) -> bool:
-    """Index + middle up, pinky curled. Ring is ignored: keeping ring curled
-    while index+middle are extended is hard on low-quality cameras, which made
-    scroll unreliable. Closed fist is checked separately and wins anyway."""
-    return fingers.index and fingers.middle and (not fingers.pinky)
+def is_scroll_pose(fingers: FingerState, pinches: PinchRatios) -> bool:
+    """Strict V-sign: index+middle up, ring+pinky curled, thumb tucked AWAY
+    from the pinky (thumb-to-pinky is the shortcut gesture).
+
+    Strict on purpose: "pinky down" is the slow cursor gear and "pinky+ring
+    down" is the precision gear, so only the tucked thumb separates the
+    scroll pose from the precision gears.
+    """
+    return (
+        fingers.index
+        and fingers.middle
+        and (not fingers.ring)
+        and (not fingers.pinky)
+        and (not fingers.thumb)
+        and pinches.pinky > cfg.PINKY_PINCH_ON_RATIO
+    )
 
 
 def is_closed_fist(fingers: FingerState) -> bool:
@@ -208,29 +226,47 @@ def is_closed_fist(fingers: FingerState) -> bool:
     )
 
 
-class GestureDetector:
-    """Stateful detector: pinch hysteresis, fist/scroll confirm, priority."""
+def _gear_target(fingers: FingerState) -> float:
+    """Cursor speed gear from extended-finger count (index/middle/ring/pinky).
 
-    # Prefer index (left click) over middle (right) when both close.
-    PINCH_PRIORITY: Tuple[str, ...] = ("index", "middle")
+    4 up = open hand = fast, 3 up = pinky down = slow, 2 or fewer = precision.
+    The thumb is not counted (unreliable on front-facing cameras).
+    """
+    up = sum((fingers.index, fingers.middle, fingers.ring, fingers.pinky))
+    if up >= 4:
+        return cfg.GEAR_FULL
+    if up == 3:
+        return cfg.GEAR_FOUR
+    return cfg.GEAR_THREE
+
+
+class GestureDetector:
+    """Stateful detector: pinch hysteresis + 4-way classification, fist/scroll
+    confirm with sticky scroll, and the EMA-smoothed speed gear."""
 
     def __init__(self) -> None:
         self._active: Optional[str] = None
+        self._scroll_on = False
         self._scroll_streak = 0
+        self._scroll_exit = 0
         self._fist_streak = 0
         self._dragging = False
         self._pinch_rearm = False
         self._anchor = AnchorFilter()
         self._size_ema: Optional[float] = None
+        self._gear: Optional[float] = None
 
     def reset(self) -> None:
         self._active = None
+        self._scroll_on = False
         self._scroll_streak = 0
+        self._scroll_exit = 0
         self._fist_streak = 0
         self._dragging = False
         self._pinch_rearm = False
         self._anchor.reset()
         self._size_ema = None
+        self._gear = None
 
     def set_dragging(self, dragging: bool) -> None:
         """Allow main loop to widen pinch-off tolerance while dragging."""
@@ -246,16 +282,38 @@ class GestureDetector:
         fingers = fingers_up(landmarks, size)
         pinches = pinch_ratios(landmarks, size)
 
-        raw_scroll = is_scroll_pose(fingers)
+        # EMA-smoothed speed gear (finger flicker never jerks the speed).
+        target_gear = _gear_target(fingers)
+        if self._gear is None:
+            self._gear = target_gear
+        else:
+            self._gear += cfg.GEAR_EMA * (target_gear - self._gear)
+
+        raw_scroll = is_scroll_pose(fingers, pinches)
         raw_fist = is_closed_fist(fingers)
 
-        # Temporal confirm for scroll / fist (avoid single-frame flicker).
-        if raw_scroll and not raw_fist:
-            self._scroll_streak += 1
+        # Scroll: confirm to engage, sticky for SCROLL_EXIT_FRAMES to release,
+        # so pose flicker while the hand moves never interrupts scrolling.
+        if not self._scroll_on:
+            if raw_scroll and not raw_fist:
+                self._scroll_streak += 1
+            else:
+                self._scroll_streak = 0
+            scroll_pose = self._scroll_streak >= cfg.SCROLL_CONFIRM_FRAMES
+            if scroll_pose:
+                self._scroll_on = True
+                self._scroll_exit = 0
         else:
-            self._scroll_streak = 0
-        scroll_pose = self._scroll_streak >= cfg.SCROLL_CONFIRM_FRAMES
+            if raw_scroll and not raw_fist:
+                self._scroll_exit = 0
+            else:
+                self._scroll_exit += 1
+            scroll_pose = self._scroll_exit < cfg.SCROLL_EXIT_FRAMES
+            if not scroll_pose:
+                self._scroll_on = False
+                self._scroll_streak = 0
 
+        # Temporal confirm for the fist (avoid single-frame flicker).
         if raw_fist and not raw_scroll:
             self._fist_streak += 1
         else:
@@ -263,9 +321,9 @@ class GestureDetector:
         closed_fist = self._fist_streak >= cfg.FIST_CONFIRM_FRAMES
 
         # Fist and confirmed scroll suppress pinches. After suppression, wait
-        # for one fully-open frame before allowing a NEW pinch to engage, so
-        # the thumb sweeping past the middle finger on fist->point cannot
-        # register as a phantom right-click.
+        # for all ratios clearly open before allowing a NEW pinch to engage,
+        # so the thumb sweeping past fingers on fist->point cannot register as
+        # a phantom click.
         if closed_fist or scroll_pose:
             self._active = None
             self._pinch_rearm = True
@@ -283,38 +341,57 @@ class GestureDetector:
             hand_size_smooth=self._size_ema,
             depth_scale=dscale,
             motion_anchor=motion_anchor,
+            gear=self._gear,
             scroll_pose=scroll_pose,
             closed_fist=closed_fist,
             active_pinch=active,
         )
 
     def _update_pinch(self, pinches: PinchRatios) -> Optional[str]:
-        ratios = {
-            "index": pinches.index,
-            "middle": pinches.middle,
-        }
-        off = cfg.DRAG_PINCH_OFF_RATIO if self._dragging else cfg.PINCH_OFF_RATIO
+        """Classify the pinch ONCE at engage; the class is latched until the
+        hand clearly opens. Priority:
+          index+middle both -> right click (easy: no need to keep the index
+                              away from the thumb -- that was the hard part)
+          pinky             -> shortcut combo
+          index only        -> left click / double / drag
+          middle only       -> right click (single-finger variant)
+        """
+        idx, mid, pky = pinches.index, pinches.middle, pinches.pinky
 
         if self._active is not None:
-            if ratios[self._active] > off:
-                self._active = None
+            off = cfg.DRAG_PINCH_OFF_RATIO if self._dragging else cfg.PINCH_OFF_RATIO
+            if self._active == "index":
+                if idx > off:
+                    self._active = None
+            elif self._active in ("index_middle", "middle"):
+                # The combined pinch ends only when BOTH fingers open.
+                if idx > cfg.PINCH_OFF_RATIO and mid > cfg.PINCH_OFF_RATIO:
+                    self._active = None
+            elif self._active == "pinky":
+                if pky > cfg.PINKY_PINCH_OFF_RATIO:
+                    self._active = None
             return self._active
 
         if self._pinch_rearm:
-            # Require all ratios clearly open before re-arming pinch engage.
-            if all(r > off for r in ratios.values()):
+            if (
+                idx > cfg.PINCH_OFF_RATIO
+                and mid > cfg.PINCH_OFF_RATIO
+                and pky > cfg.PINKY_PINCH_OFF_RATIO
+            ):
                 self._pinch_rearm = False
             else:
                 return None
 
-        candidates: List[Tuple[str, float]] = [
-            (name, ratios[name])
-            for name in self.PINCH_PRIORITY
-            if ratios[name] < cfg.PINCH_ON_RATIO
-        ]
-        if not candidates:
-            return None
-        # Prefer strongest (smallest ratio); index wins ties via priority order.
-        candidates.sort(key=lambda t: (t[1], self.PINCH_PRIORITY.index(t[0])))
-        self._active = candidates[0][0]
+        idx_on = idx < cfg.PINCH_ON_RATIO
+        mid_on = mid < cfg.PINCH_ON_RATIO
+        pky_on = pky < cfg.PINKY_PINCH_ON_RATIO
+
+        if idx_on and mid_on:
+            self._active = "index_middle"
+        elif pky_on:
+            self._active = "pinky"
+        elif idx_on:
+            self._active = "index"
+        elif mid_on:
+            self._active = "middle"
         return self._active

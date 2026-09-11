@@ -35,7 +35,6 @@ class MouseController:
         pyautogui.PAUSE = cfg.PAUSE
         self.screen_w, self.screen_h = pyautogui.size()
         self._smoothed: Optional[Tuple[float, float]] = None
-        self._residual: Tuple[float, float] = (0.0, 0.0)
         self._scroll_carry = 0.0
         self._dragging = False
 
@@ -45,7 +44,6 @@ class MouseController:
 
     def reset_smoothing(self) -> None:
         self._smoothed = None
-        self._residual = (0.0, 0.0)
 
     def hold_smoothed_position(self) -> Optional[Tuple[float, float]]:
         """Re-apply last smoothed cursor without advancing (tracking-hold grace)."""
@@ -64,30 +62,24 @@ class MouseController:
         """Move cursor toward target with velocity-adaptive exponential smoothing.
 
         Fast hand motion -> less smoothing (responsive); slow motion -> more
-        smoothing (stable). Sub-pixel deadzone skips tiny jitter moves.
+        smoothing (stable). Sub-pixel moves are skipped (the normalized-space
+        deadzone + residue in main.py already handles slow precise aiming).
         """
         if self._smoothed is None:
             self._smoothed = (target_x, target_y)
-            self._residual = (0.0, 0.0)
         else:
             sx, sy = self._smoothed
-            rx, ry = self._residual
-            dx = target_x - sx + rx
-            dy = target_y - sy + ry
+            dx = target_x - sx
+            dy = target_y - sy
             dist = math.hypot(dx, dy)
             if dist < cfg.CURSOR_DEADZONE_PX:
-                # Accumulate tiny motions so slow precise aiming does not drift.
-                self._residual = (dx, dy)
                 x = max(1.0, min(float(self.screen_w - 2), sx))
                 y = max(1.0, min(float(self.screen_h - 2), sy))
                 return x, y
-            self._residual = (0.0, 0.0)
             t = min(1.0, dist / max(cfg.SMOOTHING_VELOCITY_REF, 1e-6))
             smooth = cfg.SMOOTHING + (cfg.SMOOTHING_FAST - cfg.SMOOTHING) * t
             alpha = 1.0 - smooth
-            sx += dx * alpha
-            sy += dy * alpha
-            self._smoothed = (sx, sy)
+            self._smoothed = (sx + dx * alpha, sy + dy * alpha)
 
         x, y = self._smoothed
         x = max(1.0, min(float(self.screen_w - 2), x))
@@ -120,6 +112,10 @@ class MouseController:
     def ensure_released(self) -> None:
         """Release any held drag (e.g. hand lost past hold grace)."""
         self.mouse_up()
+
+    def shortcut(self) -> None:
+        """Press the configured shortcut combo (default Ctrl+Win+Space)."""
+        pyautogui.hotkey(*cfg.SHORTCUT_KEYS)
 
     def scroll(self, amount: float) -> None:
         """Scroll vertically in wheel notches. Positive = up.
