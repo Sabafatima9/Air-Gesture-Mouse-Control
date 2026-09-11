@@ -1,4 +1,4 @@
-﻿"""Tunable constants for Air Gesture Mouse Control."""
+"""Tunable constants for Air Gesture Mouse Control."""
 
 from __future__ import annotations
 
@@ -160,10 +160,10 @@ SHORTCUT_KEYS = ("ctrl", "winleft", "space")
 SHORTCUT_COOLDOWN = 0.35
 
 # ---------------------------------------------------------------------------
-# Scroll gesture: strict V-sign -- index+middle up, ring+pinky curled, THUMB
-# TUCKED away from the pinky. Strict on purpose: "pinky down" and "pinky+ring
-# down" are the cursor speed gears, so only the tucked thumb separates the
-# scroll pose from the precision gears.
+# Scroll gesture: THUMB-UP pose -- thumb extended, index/middle/ring/pinky
+# all curled; move the hand up/down to scroll. Cannot collide with the speed
+# gears (they need extended fingers) or the clutch fist (thumb tucked): with
+# all four fingers curled, the thumb alone decides scroll vs clutch.
 # ---------------------------------------------------------------------------
 # Palm travel (fraction of frame height, depth-normalized) per wheel notch.
 # One Windows wheel notch scrolls ~3 lines by default.

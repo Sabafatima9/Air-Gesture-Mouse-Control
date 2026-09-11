@@ -68,10 +68,9 @@ def make_hand(*, pose: str = "open", pinch: str = "", dx: float = 0.0, dy: float
         for f in ("index", "middle", "ring", "pinky"):
             _curl(pts, f)
         pts[4] = (0.47, 0.63)     # thumb tucked near the palm
-    elif pose == "scroll":        # strict V-sign: ring+pinky curled, thumb tucked
-        for f in ("ring", "pinky"):
+    elif pose == "scroll":        # thumb-up: all four curled, thumb out
+        for f in ("index", "middle", "ring", "pinky"):
             _curl(pts, f)
-        pts[4] = (0.50, 0.645)
     elif pose == "pinky_down":    # slow gear
         _curl(pts, "pinky")
     elif pose == "precision":     # pinky+ring down, thumb out: precision gear
@@ -479,6 +478,38 @@ class ShortcutTests(unittest.TestCase):
 
 
 class ScrollTests(unittest.TestCase):
+    def test_thumb_decides_fist_vs_scroll(self):
+        """All four fingers curled: thumb OUT = scroll, thumb TUCKED = clutch."""
+        # Thumb out -> scroll pose: moving the hand scrolls, cursor frozen.
+        h = Harness()
+        for _ in range(SETTLE):
+            h.feed(make_hand())
+        for _ in range(4):                   # confirm the thumb-up pose
+            h.feed(make_hand(pose="scroll"))
+        self.assertEqual(h.scrolls(), [])
+        y = 0.0
+        for _ in range(5):                   # move hand DOWN -> scroll down
+            y += 0.02
+            h.feed(make_hand(pose="scroll", dy=y))
+        self.assertNotEqual(h.scrolls(), [])
+        self.assertTrue(all(s < 0 for s in h.scrolls()))
+        self.assertEqual(h.mouse.moves, [])  # cursor never moves in scroll
+
+        # Thumb tucked -> clutch: no motion, no scroll, no clicks.
+        h2 = Harness()
+        for _ in range(SETTLE):
+            h2.feed(make_hand())
+        base = len(h2.mouse.moves)
+        for _ in range(4):                   # form the fist
+            h2.feed(make_hand(pose="fist"))
+        y = 0.0
+        for _ in range(8):                   # move while fisted
+            y += 0.02
+            h2.feed(make_hand(pose="fist", dy=y))
+        self.assertEqual(len(h2.mouse.moves), base)
+        self.assertEqual(h2.scrolls(), [])
+        self.assertEqual(h2.mouse.actions, [])
+
     def test_scroll_speed_direction_and_flicker_grace(self):
         h = Harness()
         for _ in range(SETTLE):

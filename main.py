@@ -1,4 +1,4 @@
-﻿"""
+"""
 Air Gesture Mouse Control -- entry point.
 
 Webcam -> MediaPipe Hand Landmarker -> gestures -> pyautogui mouse actions.
@@ -116,7 +116,7 @@ _LEGEND_LINES = [
     "   (or thumb+middle), release = click",
     "Shortcut: pinch thumb+pinky,",
     f"   release = {_shortcut_label()}",
-    "Scroll: V-sign (thumb tucked),",
+    "Scroll: thumb up, fingers closed,",
     "   move hand up/down",
 ]
 
@@ -552,7 +552,7 @@ def main() -> None:
         "  thumb+index = aim (cursor follows), release = left click, hold =\n"
         "  drag | pinch thumb+index+middle (or thumb+middle), release = right\n"
         f"  click | pinch thumb+pinky, release = {_shortcut_label()} shortcut\n"
-        "  V-sign (thumb tucked) + move hand = scroll"
+        "  thumb up + fingers closed, move hand = scroll"
     )
 
     landmarker = create_landmarker()

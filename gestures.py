@@ -1,4 +1,4 @@
-﻿"""Finger-up, pinch, fist, scroll-state and speed-gear detection from landmarks."""
+"""Finger-up, pinch, fist, scroll-state and speed-gear detection from landmarks."""
 
 from __future__ import annotations
 
@@ -194,35 +194,35 @@ def pinch_ratios(landmarks: Sequence, size: float) -> PinchRatios:
     )
 
 
-def is_scroll_pose(fingers: FingerState, pinches: PinchRatios) -> bool:
-    """Strict V-sign: index+middle up, ring+pinky curled, thumb tucked AWAY
-    from the pinky (thumb-to-pinky is the shortcut gesture).
+def is_scroll_pose(fingers: FingerState) -> bool:
+    """Thumb-up pose: thumb extended, index/middle/ring/pinky ALL curled.
+    Move the hand up/down to scroll.
 
-    Strict on purpose: "pinky down" is the slow cursor gear and "pinky+ring
-    down" is the precision gear, so only the tucked thumb separates the
-    scroll pose from the precision gears.
+    Cannot collide with the speed gears (those need extended fingers) and
+    cannot collide with the clutch fist (that one has the thumb tucked):
+    with all four fingers curled, the thumb alone decides scroll vs clutch.
     """
     return (
-        fingers.index
-        and fingers.middle
+        fingers.thumb
+        and (not fingers.index)
+        and (not fingers.middle)
         and (not fingers.ring)
         and (not fingers.pinky)
-        and (not fingers.thumb)
-        and pinches.pinky > cfg.PINKY_PINCH_ON_RATIO
     )
 
 
 def is_closed_fist(fingers: FingerState) -> bool:
-    """Index-pinky all curled = clutch / release pose.
+    """Index-pinky all curled AND the thumb tucked = clutch / release pose.
 
-    Thumb may be tucked or lightly out; resting comfort matters more than a
-    perfect boxing fist.
+    The thumb must be tucked: with all four fingers curled, a thumb that is
+    clearly OUT is the scroll pose instead. The thumb is the separator.
     """
     return (
         (not fingers.index)
         and (not fingers.middle)
         and (not fingers.ring)
         and (not fingers.pinky)
+        and (not fingers.thumb)
     )
 
 
@@ -289,7 +289,7 @@ class GestureDetector:
         else:
             self._gear += cfg.GEAR_EMA * (target_gear - self._gear)
 
-        raw_scroll = is_scroll_pose(fingers, pinches)
+        raw_scroll = is_scroll_pose(fingers)
         raw_fist = is_closed_fist(fingers)
 
         # Scroll: confirm to engage, sticky for SCROLL_EXIT_FRAMES to release,
