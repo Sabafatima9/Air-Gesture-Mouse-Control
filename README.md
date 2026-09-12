@@ -40,7 +40,7 @@
 
 <img src="air_gesture_preview.png" width="70%"/>
 
-*(Place your gesture-control screenshot / HUD preview image here — save it as `screenshots/air_gesture_preview.png`.)*
+
 
 </div>
 
