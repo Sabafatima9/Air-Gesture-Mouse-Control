@@ -12,7 +12,7 @@ a MockMouse, so every rule of the interaction model is verified deterministicall
   - right click: thumb+index+middle pinch, easy, on RELEASE, never drags
   - shortcut: thumb+pinky pinch fires the combo on RELEASE, repeatable
   - closed fist = clutch: motion blocked, no jump on reopen
-  - scroll: strict V-sign only (gears never scroll), palm-driven, correct
+  - scroll: thumb-up pose only (gears never scroll), palm-driven, correct
     direction, gear-independent speed, survives pose flicker
   - tracking glitches never jump the cursor
 
@@ -205,7 +205,7 @@ class PoseDetectionTests(unittest.TestCase):
             self.assertAlmostEqual(g.gear, want, delta=0.02, msg=pose)
 
     def test_gear_poses_never_scroll(self):
-        """The speed-gear poses must NOT trigger scroll (strict V-sign only)."""
+        """The speed-gear poses must NOT trigger scroll (thumb-up only)."""
         for pose in ("open", "pinky_down", "precision"):
             d = GestureDetector()
             for _ in range(8):
@@ -514,7 +514,7 @@ class ScrollTests(unittest.TestCase):
         h = Harness()
         for _ in range(SETTLE):
             h.feed(make_hand())
-        for _ in range(3):                   # confirm V-sign, still hand
+        for _ in range(3):                   # confirm thumb-up, still hand
             h.feed(make_hand(pose="scroll"))
         self.assertEqual(h.scrolls(), [])
         y = 0.0
@@ -523,7 +523,7 @@ class ScrollTests(unittest.TestCase):
             h.feed(make_hand(pose="scroll", dy=y))
         total = sum(h.scrolls())
         # ~45 notches over 10 frames: useful speed, and NOT gear-scaled
-        # (the V-sign is a 2-finger pose = precision gear, must not matter).
+        # (scroll is thumb-up / 0 fingers up = not a gear pose; gears must not matter).
         self.assertLess(total, -30)
         self.assertTrue(all(s < 0 for s in h.scrolls()))
         for i in range(3):                   # brief pose flicker: sticky window
