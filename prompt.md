@@ -7,9 +7,29 @@ Living brief for assistants working on this repo. Keep this file accurate when t
 Cross-platform **hand-gesture mouse** for a **front-facing webcam** (selfie view; mild angles OK -- no hard ~90-degree palm gate).
 
 - **Stack:** OpenCV + MediaPipe Hand Landmarker (Tasks API) + pyautogui + numpy
-- **Entry:** `python main.py` (or `python hand.py`); Windows users double-click `run.bat`
+- **Entry (source):** `python main.py` (or `python hand.py`); Windows users double-click `run.bat` (expects `venv\Scripts\python.exe`)
+- **Optional Windows binary:** `main.spec` builds a PyInstaller one-file `main.exe`. Prefer Releases (or a fresh local build) over any checked-in `dist/` / `build/` tree. Do **not** commit build outputs or `.exe` binaries.
 - **OS:** Linux, macOS, Windows (see README for OS-specific install / permissions)
 - **Remote:** https://github.com/Sabafatima9/Air-Gesture-Mouse-Control
+
+## Layout (tracked source)
+
+```
+main.py                 # Camera loop, HUD, action state machine
+gestures.py             # Palm anchor, finger/pinch/fist/scroll-pose/gear detection
+mouse_controller.py     # Mouse actions + smoothing (incl. Windows wheel-notch fix)
+config.py               # Tunables (gains, gears, pinch feel, timings, SHORTCUT_KEYS)
+hand.py                 # Thin wrapper -> main.main()
+tests/test_logic.py     # Offline state-machine tests (mock mouse, no camera)
+run.bat                 # Windows launcher using project venv
+requirements.txt
+main.spec               # PyInstaller recipe (optional packaging)
+air_gesture_preview.png # README preview image
+prompt.md               # This brief
+README.md
+```
+
+Ignore / never commit: `venv/`, `.venv/`, `__pycache__/`, `hand_landmarker.task`, `build/`, `dist/`, `*.exe`.
 
 ## Interaction model (do not regress these)
 
@@ -24,6 +44,7 @@ Cross-platform **hand-gesture mouse** for a **front-facing webcam** (selfie view
 - **Scroll pose (thumb-up):** thumb extended, index/middle/ring/pinky ALL curled; move hand up/down. Cannot collide with the speed gears (they need extended fingers) or the clutch fist (thumb tucked): the thumb alone decides scroll vs clutch. Confirm `SCROLL_CONFIRM_FRAMES` to engage; sticky for `SCROLL_EXIT_FRAMES` when broken; palm-anchor driven; `SCROLL_TICK_TRAVEL` per notch; gear-independent.
 - **Priority:** closed fist > confirmed scroll pose > pinches. Pinch classification is latched at engage until the hand clearly opens.
 - **Windows scroll quirk:** pyautogui sends raw wheel detents on win32 (120 per notch) -- `MouseController.scroll` multiplies by `WHEEL_DELTA` there.
+
 ## Tracking design (keep when editing)
 
 - `gestures.py`: `AnchorFilter` = velocity-adaptive EMA on the palm anchor (calm when still, loose when moving; snaps on > ANCHOR_SNAP glitches). Hand size is EMA'd for distance-invariant gain (REFERENCE_HAND_SIZE / size, clamped).
@@ -38,15 +59,17 @@ Cross-platform **hand-gesture mouse** for a **front-facing webcam** (selfie view
 
 - Dependencies live ONLY in the project venv (`venv/`). Never install project deps into the system Python.
 - Windows launcher: `run.bat` (uses `venv\Scripts\python.exe`, no activation).
-- `hand_landmarker.task` (7.8 MB) is auto-downloaded; it is NOT tracked in git (.gitignore lists it). Keep it that way.
+- `hand_landmarker.task` (~8 MB) is auto-downloaded; it is NOT tracked in git (.gitignore lists it). Keep it that way.
+- Packaging: `main.spec` is the PyInstaller recipe. Output belongs under `dist/` locally or on GitHub Releases -- never commit `build/`, `dist/`, or `.exe` files.
 - Offline tests: `venv\Scripts\python tests\test_logic.py` -- synthetic landmarks drive the whole state machine with a mock mouse (no camera). Extend when changing gesture logic; keep green.
 
 ## Safety & convenience
 
 - pyautogui **FAILSAFE**: corner fling (top-left) aborts.
-- Quit: **Q** / **Esc**; always release camera / landmarker / mouse buttons on exit.
+- Quit: **Q** / **Esc**; always release camera / landmarker / mouse buttons on exit (`finally` in `main.py`).
 - Pinch distances normalized by hand size (distance-stable).
-- Do **not** commit secrets, tokens, or personal paths into this repo.
+- Do **not** commit secrets, tokens, personal paths, PyInstaller `build/` trees, or binary `.exe` blobs into this repo.
+- README must not claim a working in-repo `main.exe` unless a real binary is published (Releases or a fresh build). Broken LFS stubs mislead users.
 
 ## When this file is wrong
 

@@ -5,3 +5,6 @@ __pycache__/
 .Python
 *.egg-info/
 hand_landmarker.task
+build/
+dist/
+*.exe
