@@ -8,3 +8,4 @@ hand_landmarker.task
 build/
 dist/
 *.exe
+!AirGestureMouse.exe

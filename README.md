@@ -14,16 +14,21 @@
 
 ---
 
-## 🚀 Want a Windows `.exe`?
+## 🪟 Windows: download / run `AirGestureMouse.exe`
 
-<div align="center">
+**Front and center:** the Windows one-file binary is in the **root of this repo**:
 
-## 📥 [**Check GitHub Releases for `main.exe`**](../../releases)
+### [`AirGestureMouse.exe`](./AirGestureMouse.exe)
 
-</div>
+1. Download **`AirGestureMouse.exe`** from the repository root (Git LFS — use the download button / `git lfs pull` if cloning).
+2. Double-click it. Allow webcam access if Windows asks.
+3. **Q / Esc** quits. Emergency stop: fling the cursor into the **top-left** corner.
 
-> Prefer the **Quick Start (Run from Source)** below — that path is always current.
-> A Windows one-file binary can be built locally with PyInstaller via `main.spec` (`pyinstaller main.spec`). Publish the result on **Releases**; do **not** commit `build/`, `dist/`, or `.exe` files into git.
+> Size is ~113 MB (MediaPipe + OpenCV bundled). First launch may unpack briefly to a temp folder.
+
+**Rebuild on Windows (optional):** double-click [`build-windows.bat`](./build-windows.bat) after creating a venv and installing `requirements.txt` + PyInstaller. Or: `venv\Scripts\python -m PyInstaller --noconfirm main.spec`, then copy `dist\AirGestureMouse.exe` to the repo root.
+
+Prefer running from source? See **Quick Start** below.
 
 ---
 
@@ -150,21 +155,23 @@ System Settings → Privacy & Security, then restart the terminal.
 
 ```
 Air-Gesture-Mouse-Control/
+├── AirGestureMouse.exe     # Windows one-file binary (Git LFS) — start here on Windows
 ├── main.py                 # Camera loop, HUD, action state machine
 ├── gestures.py             # Palm anchor, finger/pinch/fist/scroll-pose/gear detection
 ├── mouse_controller.py     # Mouse actions + smoothing (incl. Windows wheel-notch fix)
 ├── config.py               # Tunables (gains, gears, pinch feel, timings, shortcut keys)
 ├── hand.py                 # Thin wrapper -> main.main()
 ├── tests/test_logic.py     # Offline gesture state-machine tests
-├── run.bat                 # Windows launcher (uses project venv)
+├── run.bat                 # Windows launcher from source (uses project venv)
+├── build-windows.bat       # Rebuild AirGestureMouse.exe with PyInstaller
 ├── requirements.txt
-├── main.spec               # Optional PyInstaller recipe for Windows .exe
+├── main.spec               # PyInstaller recipe (output name: AirGestureMouse)
 ├── air_gesture_preview.png # Preview image
 ├── prompt.md               # Living brief for agents working on this repo
 └── README.md               # You're here
 ```
 
-Not committed: `venv/`, `hand_landmarker.task` (auto-downloaded), `build/`, `dist/`.
+Not committed: `venv/`, `hand_landmarker.task` (auto-downloaded), `build/`, `dist/`, other `*.exe`.
 
 ---
 

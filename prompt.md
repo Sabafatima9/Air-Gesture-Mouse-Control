@@ -8,7 +8,7 @@ Cross-platform **hand-gesture mouse** for a **front-facing webcam** (selfie view
 
 - **Stack:** OpenCV + MediaPipe Hand Landmarker (Tasks API) + pyautogui + numpy
 - **Entry (source):** `python main.py` (or `python hand.py`); Windows users double-click `run.bat` (expects `venv\Scripts\python.exe`)
-- **Optional Windows binary:** `main.spec` builds a PyInstaller one-file `main.exe`. Prefer Releases (or a fresh local build) over any checked-in `dist/` / `build/` tree. Do **not** commit build outputs or `.exe` binaries.
+- **Windows binary (front and center):** root `AirGestureMouse.exe` (Git LFS, ~113 MB PE32+ one-file). Built via `main.spec` / `build-windows.bat` on Windows. Do **not** commit `build/`, `dist/`, or other `*.exe` files — only the allowlisted root `AirGestureMouse.exe`.
 - **OS:** Linux, macOS, Windows (see README for OS-specific install / permissions)
 - **Remote:** https://github.com/Sabafatima9/Air-Gesture-Mouse-Control
 
@@ -23,13 +23,15 @@ hand.py                 # Thin wrapper -> main.main()
 tests/test_logic.py     # Offline state-machine tests (mock mouse, no camera)
 run.bat                 # Windows launcher using project venv
 requirements.txt
-main.spec               # PyInstaller recipe (optional packaging)
+main.spec               # PyInstaller recipe -> AirGestureMouse.exe
+build-windows.bat       # Windows one-click rebuild (copies exe to repo root)
+AirGestureMouse.exe     # Root Windows one-file binary (Git LFS; tracked)
 air_gesture_preview.png # README preview image
 prompt.md               # This brief
 README.md
 ```
 
-Ignore / never commit: `venv/`, `.venv/`, `__pycache__/`, `hand_landmarker.task`, `build/`, `dist/`, `*.exe`.
+Ignore / never commit: `venv/`, `.venv/`, `__pycache__/`, `hand_landmarker.task`, `build/`, `dist/`, other `*.exe` (root `AirGestureMouse.exe` is the exception via `.gitignore` negation + LFS).
 
 ## Interaction model (do not regress these)
 
@@ -60,7 +62,7 @@ Ignore / never commit: `venv/`, `.venv/`, `__pycache__/`, `hand_landmarker.task`
 - Dependencies live ONLY in the project venv (`venv/`). Never install project deps into the system Python.
 - Windows launcher: `run.bat` (uses `venv\Scripts\python.exe`, no activation).
 - `hand_landmarker.task` (~8 MB) is auto-downloaded; it is NOT tracked in git (.gitignore lists it). Keep it that way.
-- Packaging: `main.spec` is the PyInstaller recipe. Output belongs under `dist/` locally or on GitHub Releases -- never commit `build/`, `dist/`, or `.exe` files.
+- Packaging: `main.spec` / `build-windows.bat` produce `AirGestureMouse.exe`. Keep the real PE at repo root (LFS). Never commit `build/`, `dist/`, or stub/broken `.exe` files. Rebuild on Windows; Linux cannot cross-build this stack reliably.
 - Offline tests: `venv\Scripts\python tests\test_logic.py` -- synthetic landmarks drive the whole state machine with a mock mouse (no camera). Extend when changing gesture logic; keep green.
 
 ## Safety & convenience
@@ -68,8 +70,8 @@ Ignore / never commit: `venv/`, `.venv/`, `__pycache__/`, `hand_landmarker.task`
 - pyautogui **FAILSAFE**: corner fling (top-left) aborts.
 - Quit: **Q** / **Esc**; always release camera / landmarker / mouse buttons on exit (`finally` in `main.py`).
 - Pinch distances normalized by hand size (distance-stable).
-- Do **not** commit secrets, tokens, personal paths, PyInstaller `build/` trees, or binary `.exe` blobs into this repo.
-- README must not claim a working in-repo `main.exe` unless a real binary is published (Releases or a fresh build). Broken LFS stubs mislead users.
+- Do **not** commit secrets, tokens, personal paths, or PyInstaller `build/` / `dist/` trees. The only binary allowed in-repo is root `AirGestureMouse.exe` (real Windows PE via LFS).
+- README must lead with Windows + `AirGestureMouse.exe`. Never leave a broken LFS stub or fake `.exe` that is not a PE.
 
 ## When this file is wrong
 

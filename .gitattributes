@@ -1,2 +1,2 @@
-# Optional: if you ever publish large Release assets via LFS, add patterns here.
-# Do not track PyInstaller build/dist outputs in git.
+# Track the root Windows one-file binary with Git LFS (>100 MB).
+AirGestureMouse.exe filter=lfs diff=lfs merge=lfs -text
