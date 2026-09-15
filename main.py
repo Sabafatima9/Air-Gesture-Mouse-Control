@@ -104,9 +104,9 @@ def _shortcut_label() -> str:
 # Short on-screen legend (simplified gesture -> mouse action).
 _LEGEND_LINES = [
     "Move: hand motion (relative)",
-    "Speed gear: 5 fingers fast,",
-    "   4 (pinky down) slow,",
-    "   3 (pinky+ring down) precision",
+    "Speed gear: open hand fast,",
+    "   pinky down slow,",
+    "   pinky+ring down precision",
     "Clutch: closed fist = release",
     "L-click: pinch thumb+index,",
     "   cursor follows, release = click",
@@ -547,7 +547,7 @@ def main() -> None:
     )
     print("FAILSAFE: fling cursor to top-left corner to emergency-stop.")
     print(
-        "Gestures: hand motion = cursor (relative; 5 fingers fast, pinky down\n"
+        "Gestures: hand motion = cursor (relative; open hand fast, pinky down\n"
         "  slow, pinky+ring down precision) | fist = release/clutch | pinch\n"
         "  thumb+index = aim (cursor follows), release = left click, hold =\n"
         "  drag | pinch thumb+index+middle (or thumb+middle), release = right\n"

@@ -14,17 +14,16 @@
 
 ---
 
-## 🚀 Just Want to Try It? Download & Run — No Setup Needed!
+## 🚀 Want a Windows `.exe`?
 
 <div align="center">
 
-## 📥 [**⬇️ DOWNLOAD `main.exe` FROM THIS REPO ⬇️**](../../releases)
-
-### 👉 It's sitting right in the repo — grab it, double-click, and start moving your mouse with your hand in seconds!
+## 📥 [**Check GitHub Releases for `main.exe`**](../../releases)
 
 </div>
 
-> No Python, no venv, no pip install — just download `main.exe`, run it, allow camera access, and put your hand up. That's it.
+> Prefer the **Quick Start (Run from Source)** below — that path is always current.
+> A Windows one-file binary can be built locally with PyInstaller via `main.spec` (`pyinstaller main.spec`). Publish the result on **Releases**; do **not** commit `build/`, `dist/`, or `.exe` files into git.
 
 ---
 
@@ -150,22 +149,22 @@ System Settings → Privacy & Security, then restart the terminal.
 ## 🏗️ Project Layout
 
 ```
-Air_Gesture_Mouse_Control/
-├── main.py                  # Camera loop, HUD, action state machine
-├── main.exe                  # 🚀 Prebuilt Windows executable — just run it!
-├── gestures.py                 # Palm anchor, finger/pinch/fist/scroll-pose/gear detection
-├── mouse_controller.py           # Mouse actions + smoothing (incl. Windows wheel-notch fix)
-├── config.py                       # All tunable constants (gains, gears, pinch feel, timings, shortcut keys)
-├── hand.py                            # Thin wrapper -> main.main()
-├── tests/
-│   └── test_logic.py                     # Offline tests of the gesture state machine
-├── screenshots/
-│   └── air_gesture_preview.png              # 📸 Preview image goes here
-├── run.bat                                     # Windows launcher
-├── hand_landmarker.task                           # MediaPipe model (auto-downloaded, not committed)
-├── prompt.md                                         # Living brief for agents working on this repo
-└── README.md                                            # 📖 You're here
+Air-Gesture-Mouse-Control/
+├── main.py                 # Camera loop, HUD, action state machine
+├── gestures.py             # Palm anchor, finger/pinch/fist/scroll-pose/gear detection
+├── mouse_controller.py     # Mouse actions + smoothing (incl. Windows wheel-notch fix)
+├── config.py               # Tunables (gains, gears, pinch feel, timings, shortcut keys)
+├── hand.py                 # Thin wrapper -> main.main()
+├── tests/test_logic.py     # Offline gesture state-machine tests
+├── run.bat                 # Windows launcher (uses project venv)
+├── requirements.txt
+├── main.spec               # Optional PyInstaller recipe for Windows .exe
+├── air_gesture_preview.png # Preview image
+├── prompt.md               # Living brief for agents working on this repo
+└── README.md               # You're here
 ```
+
+Not committed: `venv/`, `hand_landmarker.task` (auto-downloaded), `build/`, `dist/`.
 
 ---
 
